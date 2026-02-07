@@ -1,0 +1,112 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(uuid())
+  name          String
+  tiktokUsername String        @unique @map("tiktok_username")
+  mpesaMobile   String         @map("mpesa_mobile")
+  whatsappNumber String        @map("whatsapp_number")
+  isActive      Boolean        @default(true) @map("is_active")
+  addedToWhatsApp Boolean     @default(false) @map("added_to_whatsapp")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  subscriptions Subscription[]
+  payments      Payment[]
+
+  @@map("users")
+}
+
+model Subscription {
+  id          String             @id @default(uuid())
+  userId      String             @map("user_id")
+  months      Int
+  startDate   DateTime           @map("start_date") @db.Date
+  endDate     DateTime           @map("end_date") @db.Date
+  status      SubscriptionStatus  @default(ACTIVE)
+  amount      Decimal            @db.Decimal(10, 2)
+  paymentId   String?            @map("payment_id")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+model Payment {
+  id                  String        @id @default(uuid())
+  userId              String        @map("user_id")
+  amount              Decimal       @db.Decimal(10, 2)
+  months              Int           @default(1)
+  status              PaymentStatus @default(PENDING)
+  transactionRequestId String?       @map("transaction_request_id")
+  transactionId       String?       @map("transaction_id")
+  transactionReceipt  String?       @map("transaction_receipt")
+  merchantRequestId   String?       @map("merchant_request_id")
+  checkoutRequestId   String?       @map("checkout_request_id")
+  reference           String?
+  failureReason       String?       @map("failure_reason")
+  completedAt         DateTime?     @map("completed_at")
+  failedAt            DateTime?     @map("failed_at")
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
+
+  user                User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Admin {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  email     String   @unique
+  password  String
+  role      AdminRole @default(ADMIN)
+  isActive  Boolean  @default(true) @map("is_active")
+  lastLogin DateTime? @map("last_login")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@map("admins")
+}
+
+enum AdminRole {
+  MODERATOR
+  ADMIN
+  SUPER_ADMIN
+}
+
+model Settings {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by")
+
+  @@map("settings")
+}

@@ -1,0 +1,25 @@
+# Development Dockerfile for NestJS backend
+# Build for AMD64 architecture
+
+FROM --platform=linux/amd64 node:18-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package.json yarn.lock* ./
+RUN yarn install
+
+# Copy Prisma schema
+COPY prisma ./prisma/
+
+# Generate Prisma client
+RUN yarn prisma generate
+
+# Copy source code
+COPY . .
+
+# Expose port
+EXPOSE 2000
+
+# Start in development mode with watch
+CMD ["yarn", "start:dev"]
