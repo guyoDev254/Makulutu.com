@@ -30,10 +30,15 @@ import {
   X,
   MessageCircle,
   Settings as SettingsIcon,
-  Lock
+  Lock,
+  Megaphone,
+  Link2,
+  Copy,
+  Plus,
+  Trash2,
 } from 'lucide-react'
 import Swal from 'sweetalert2'
-import api from '@/lib/api'
+import api, { apiNetworkErrorHint, isAxiosNetworkError } from '@/lib/api'
 import { isAuthenticated, getAdminUser, clearAuth } from '@/lib/auth'
 
 interface DashboardStats {
@@ -103,6 +108,30 @@ export default function AdminDashboard() {
     startDate: new Date().toISOString().split('T')[0],
     status: 'active',
   })
+  const [obsTestUsername, setObsTestUsername] = useState('TestCreator')
+  const [obsTestKind, setObsTestKind] = useState<'new' | 'renewal'>('new')
+  const [obsTestLoading, setObsTestLoading] = useState(false)
+  const [obsLinkInfo, setObsLinkInfo] = useState<{
+    enabled: boolean
+    playerUrl: string | null
+    copyUrl: string | null
+    message: string | null
+    cloudTts?: boolean
+    groq?: boolean
+    gemini?: boolean
+    uniqueLinks?: Array<{
+      id: string
+      label: string | null
+      tokenSuffix: string
+      createdAt: string
+    }>
+    legacyUsesSharedSecret?: boolean
+  } | null>(null)
+  const [obsNewLinkLabel, setObsNewLinkLabel] = useState('')
+  const [obsCreateLinkLoading, setObsCreateLinkLoading] = useState(false)
+  const [obsRevokeId, setObsRevokeId] = useState<string | null>(null)
+  const [obsTestLanguage, setObsTestLanguage] = useState('en-US')
+  const [obsTestSkipGemini, setObsTestSkipGemini] = useState(false)
 
   // Debounce search
   useEffect(() => {
@@ -141,6 +170,93 @@ export default function AdminDashboard() {
     }
   }, [activeTab, debouncedSearch, statusFilter, usersPagination.page, subscriptionsPagination.page, paymentsPagination.page])
 
+  const obsLinkLoadError = (err: unknown) => ({
+    enabled: false,
+    playerUrl: null,
+    copyUrl: null,
+    uniqueLinks: [] as Array<{
+      id: string
+      label: string | null
+      tokenSuffix: string
+      createdAt: string
+    }>,
+    cloudTts: false,
+    groq: false,
+    gemini: false,
+    message: isAxiosNetworkError(err)
+      ? apiNetworkErrorHint()
+      : 'Could not load OBS link.',
+  })
+
+  const loadObsAlerts = () => {
+    return api
+      .get('/admin/obs-alerts/link')
+      .then((res) => {
+        setObsLinkInfo(res.data)
+        return res.data
+      })
+      .catch((err) => {
+        setObsLinkInfo(obsLinkLoadError(err))
+      })
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'overview' || loading) return
+    let cancelled = false
+    api
+      .get('/admin/obs-alerts/link')
+      .then((res) => {
+        if (!cancelled) setObsLinkInfo(res.data)
+      })
+      .catch((err) => {
+        if (!cancelled) setObsLinkInfo(obsLinkLoadError(err))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, loading])
+
+  const apiPublicBase = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '')
+  const obsPasteUrl = (() => {
+    if (!obsLinkInfo) return ''
+    if (obsLinkInfo.playerUrl) return obsLinkInfo.playerUrl
+    const path = obsLinkInfo.copyUrl
+    if (path?.startsWith('/') && apiPublicBase) {
+      return `${apiPublicBase}${path}`
+    }
+    return path ?? ''
+  })()
+
+  const copyObsPasteUrl = async () => {
+    const text = obsPasteUrl
+    if (!text) {
+      Swal.fire({
+        icon: 'info',
+        title: 'No URL yet',
+        text: obsLinkInfo?.message || 'Configure OBS on the backend first.',
+        confirmButtonColor: '#c026d3',
+      })
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(text)
+      Swal.fire({
+        icon: 'success',
+        title: 'Copied',
+        text: 'Paste into OBS → Browser Source → URL',
+        timer: 1800,
+        showConfirmButton: false,
+      })
+    } catch {
+      Swal.fire({
+        icon: 'error',
+        title: 'Copy failed',
+        text: 'Select the URL in the field and copy manually.',
+        confirmButtonColor: '#dc2626',
+      })
+    }
+  }
+
   const fetchDashboardData = async () => {
     try {
       const statsRes = await api.get('/admin/dashboard')
@@ -152,7 +268,9 @@ export default function AdminDashboard() {
       Swal.fire({
         icon: 'error',
         title: 'Error Loading Data',
-        text: error.response?.data?.message || 'Failed to load dashboard data',
+        text: isAxiosNetworkError(error)
+          ? apiNetworkErrorHint()
+          : error.response?.data?.message || 'Failed to load dashboard data',
         confirmButtonColor: '#dc2626',
       })
     }
@@ -565,6 +683,133 @@ export default function AdminDashboard() {
     }
   }
 
+  const handleTestObsAlert = async () => {
+    const trimmed = obsTestUsername.trim().replace(/^@+/, '') || 'TestCreator'
+    setObsTestLoading(true)
+    try {
+      const res = await api.post('/admin/obs-alerts/test', {
+        tiktokUsername: trimmed,
+        kind: obsTestKind,
+        languageCode: obsTestLanguage,
+        ...(obsTestSkipGemini ? { skipGemini: true } : {}),
+      })
+      const enabled = res.data?.obsEnabled !== false
+      const sseListeners = res.data?.sseListeners as number | undefined
+      const nobodyListening =
+        enabled && typeof sseListeners === 'number' && sseListeners === 0
+      if (nobodyListening) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'No OBS player connected',
+          html: `<p class="text-left text-sm">The test ran on the API, but <strong>0</strong> browsers were subscribed to the alert stream, so nothing will show in OBS.</p><ul class="text-left text-sm mt-2 pl-4 list-disc space-y-1"><li>Add a <strong>Browser Source</strong> with the URL from this page (same host as your API).</li><li>Wait until the source status shows <strong>Connected</strong>, then test again.</li><li>If the API uses a path prefix (e.g. <code>/api</code>), reload the player after deploying — the stream URL is fixed automatically.</li><li>Multiple API workers without sticky sessions each have their own subscribers; use one instance or session affinity.</li></ul>`,
+          confirmButtonColor: '#c026d3',
+        })
+        return
+      }
+      Swal.fire({
+        icon: 'success',
+        title: 'Alert sent',
+        text: enabled
+          ? `OBS should show @${trimmed} (${obsTestKind}). ${typeof sseListeners === 'number' ? `${sseListeners} listener(s) connected.` : ''}`.trim()
+          : `Event emitted (dev mode). In production, set OBS_ALERT_SECRET and use the player URL with the same token, or the Browser Source will not connect.`,
+        timer: enabled ? 2800 : 4500,
+        showConfirmButton: false,
+      })
+    } catch (error: any) {
+      const d = error.response?.data
+      let msg =
+        (typeof d?.message === 'string' && d.message) ||
+        (Array.isArray(d?.message) && d.message.join('; ')) ||
+        d?.error ||
+        error.message ||
+        'Failed to send test alert'
+      if (isAxiosNetworkError(error)) {
+        msg = apiNetworkErrorHint()
+      }
+      Swal.fire({
+        icon: 'error',
+        title: 'Test failed',
+        text: typeof msg === 'string' ? msg : 'Check admin auth, API URL, and server logs.',
+        confirmButtonColor: '#dc2626',
+      })
+    } finally {
+      setObsTestLoading(false)
+    }
+  }
+
+  const handleCreateObsStreamLink = async () => {
+    setObsCreateLinkLoading(true)
+    try {
+      const label = obsNewLinkLabel.trim()
+      const res = await api.post('/admin/obs-stream-links', {
+        ...(label ? { label } : {}),
+      })
+      const url = res.data?.playerUrl || res.data?.copyUrl
+      await loadObsAlerts()
+      setObsNewLinkLabel('')
+      await Swal.fire({
+        icon: 'success',
+        title: 'Unique OBS link created',
+        html: url
+          ? `<p class="text-sm text-left mb-2">Copy this into OBS → Browser Source → URL. The token is shown only once; save it somewhere safe.</p><p class="text-xs font-mono break-all text-left bg-gray-900 p-2 rounded">${url}</p>`
+          : '<p>Link created. Set OBS_PLAYER_BASE_URL on the API to see a full URL here.</p>',
+        confirmButtonColor: '#c026d3',
+      })
+      if (url && navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(url)
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (error: any) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Could not create link',
+        text:
+          error.response?.data?.message ||
+          error.message ||
+          'Admin role required or server error.',
+        confirmButtonColor: '#dc2626',
+      })
+    } finally {
+      setObsCreateLinkLoading(false)
+    }
+  }
+
+  const handleRevokeObsStreamLink = async (id: string) => {
+    const ok = await Swal.fire({
+      icon: 'warning',
+      title: 'Revoke this link?',
+      text: 'OBS sources using this URL will stop receiving alerts.',
+      showCancelButton: true,
+      confirmButtonText: 'Revoke',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#dc2626',
+    })
+    if (!ok.isConfirmed) return
+    setObsRevokeId(id)
+    try {
+      await api.delete(`/admin/obs-stream-links/${id}`)
+      await loadObsAlerts()
+      Swal.fire({
+        icon: 'success',
+        title: 'Revoked',
+        timer: 1600,
+        showConfirmButton: false,
+      })
+    } catch (error: any) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Revoke failed',
+        text: error.response?.data?.message || error.message || 'Try again.',
+        confirmButtonColor: '#dc2626',
+      })
+    } finally {
+      setObsRevokeId(null)
+    }
+  }
+
   const handleSaveSettings = async () => {
     try {
       // Validate price
@@ -835,6 +1080,230 @@ export default function AdminDashboard() {
                   <h3 className="text-gray-300 font-semibold">Total Subscriptions</h3>
                 </div>
                 <p className="text-2xl font-bold text-white">{stats.subscriptions.total}</p>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-fuchsia-500/10 to-purple-600/5 rounded-xl p-6 border border-fuchsia-500/25 space-y-5">
+              <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                <div className="flex gap-3">
+                  <div className="p-3 bg-fuchsia-500/20 rounded-lg shrink-0">
+                    <Megaphone className="w-6 h-6 text-fuchsia-300" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">OBS subscriber alert (test)</h3>
+                    <p className="text-sm text-gray-400 mt-1 max-w-xl">
+                      Add this URL as an OBS Browser Source, keep it open, then use Test below. Real
+                      subscribers fire the same trigger automatically.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-end gap-3 lg:min-w-[280px]">
+                  <div className="min-w-[140px]">
+                    <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                      TTS language
+                    </label>
+                    <select
+                      value={obsTestLanguage}
+                      onChange={(e) => setObsTestLanguage(e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
+                    >
+                      <option value="en-US">English (US)</option>
+                      <option value="en-GB">English (UK)</option>
+                      <option value="sw-KE">Kiswahili (Kenya)</option>
+                      <option value="fr-FR">French</option>
+                      <option value="es-ES">Spanish</option>
+                      <option value="de-DE">German</option>
+                      <option value="ar-XA">Arabic</option>
+                      <option value="hi-IN">Hindi</option>
+                      <option value="zh-CN">Chinese (Mandarin)</option>
+                      <option value="ja-JP">Japanese</option>
+                      <option value="pt-BR">Portuguese (Brazil)</option>
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[160px]">
+                    <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                      TikTok username
+                    </label>
+                    <input
+                      type="text"
+                      value={obsTestUsername}
+                      onChange={(e) => setObsTestUsername(e.target.value)}
+                      placeholder="TestCreator"
+                      className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
+                    />
+                  </div>
+                  <div className="min-w-[120px]">
+                    <label className="block text-xs font-medium text-gray-400 mb-1.5">Type</label>
+                    <select
+                      value={obsTestKind}
+                      onChange={(e) =>
+                        setObsTestKind(e.target.value as 'new' | 'renewal')
+                      }
+                      className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
+                    >
+                      <option value="new">New subscriber</option>
+                      <option value="renewal">Resubscribed</option>
+                    </select>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-gray-400 self-end pb-1 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={obsTestSkipGemini}
+                      onChange={(e) => setObsTestSkipGemini(e.target.checked)}
+                      className="rounded border-gray-600 bg-gray-900 text-fuchsia-600 focus:ring-fuchsia-500"
+                    />
+                    Skip AI line
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleTestObsAlert}
+                    disabled={obsTestLoading}
+                    className="px-4 py-2 h-[38px] self-end bg-fuchsia-600 hover:bg-fuchsia-500 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50 flex items-center justify-center gap-2 shrink-0"
+                  >
+                    {obsTestLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Megaphone className="w-4 h-4" />
+                    )}
+                    Test alert
+                  </button>
+                </div>
+              </div>
+
+              <div className="border-t border-fuchsia-500/20 pt-4 space-y-4">
+                {isAdminOrSuper() && (
+                  <div className="rounded-lg border border-fuchsia-500/20 bg-gray-900/30 p-4 space-y-3">
+                    <div>
+                      <h4 className="text-sm font-semibold text-white">
+                        Unique OBS links
+                      </h4>
+                      <p className="text-xs text-gray-500 mt-1">
+                        One URL per Browser Source or scene. Revoking a link does not affect others. The
+                        full URL is shown only when you generate it—copy it immediately.
+                      </p>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={obsNewLinkLabel}
+                        onChange={(e) => setObsNewLinkLabel(e.target.value)}
+                        placeholder="Label (optional), e.g. Main scene"
+                        className="flex-1 min-w-0 px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCreateObsStreamLink}
+                        disabled={obsCreateLinkLoading}
+                        className="px-4 py-2 bg-fuchsia-700 hover:bg-fuchsia-600 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
+                      >
+                        {obsCreateLinkLoading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Plus className="w-4 h-4" />
+                        )}
+                        Generate link
+                      </button>
+                    </div>
+                    {(obsLinkInfo?.uniqueLinks?.length ?? 0) > 0 && (
+                      <ul className="space-y-2">
+                        {obsLinkInfo!.uniqueLinks!.map((link) => (
+                          <li
+                            key={link.id}
+                            className="flex items-center justify-between gap-2 text-sm bg-gray-900/60 border border-gray-700/60 rounded-lg px-3 py-2"
+                          >
+                            <span className="text-gray-200 min-w-0 truncate">
+                              <span className="font-medium">
+                                {link.label || 'Unnamed source'}
+                              </span>
+                              <span className="text-gray-500 ml-2 font-mono text-xs">
+                                …{link.tokenSuffix}
+                              </span>
+                              <span className="text-gray-600 ml-2 text-xs">
+                                {new Date(link.createdAt).toLocaleString()}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleRevokeObsStreamLink(link.id)}
+                              disabled={obsRevokeId === link.id}
+                              className="p-2 rounded-md text-red-400 hover:bg-red-500/10 disabled:opacity-40 shrink-0"
+                              title="Revoke link"
+                            >
+                              {obsRevokeId === link.id ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-4 h-4" />
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
+                <div>
+                <label className="flex items-center gap-2 text-xs font-medium text-gray-400 mb-2">
+                  <Link2 className="w-3.5 h-3.5" />
+                  Shared secret URL {obsLinkInfo?.legacyUsesSharedSecret ? '' : '(optional)'}
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={obsPasteUrl}
+                    placeholder={
+                      obsLinkInfo === null
+                        ? 'Loading…'
+                        : 'Set OBS_PLAYER_BASE_URL or WEBHOOK_BASE_URL on the API'
+                    }
+                    className="flex-1 min-w-0 px-3 py-2 bg-gray-900/70 border border-gray-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                  />
+                  <button
+                    type="button"
+                    onClick={copyObsPasteUrl}
+                    disabled={!obsPasteUrl}
+                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shrink-0 disabled:opacity-40"
+                  >
+                    <Copy className="w-4 h-4" />
+                    Copy
+                  </button>
+                </div>
+                {obsLinkInfo?.message && (
+                  <p className="text-xs text-amber-400/90 mt-2">{obsLinkInfo.message}</p>
+                )}
+                <div className="text-xs mt-2 space-y-1">
+                  {obsLinkInfo?.cloudTts ? (
+                    <p className="text-emerald-400/90">
+                      Google Cloud TTS is enabled — high-quality speech in many languages.
+                    </p>
+                  ) : (
+                    <p className="text-gray-500">
+                      Add GOOGLE_CLOUD_TTS_API_KEY on the API for neural multilingual TTS; otherwise
+                      the OBS player uses your system browser voices.
+                    </p>
+                  )}
+                  {obsLinkInfo?.groq ? (
+                    <p className="text-sky-400/90">
+                      Groq (free tier) is enabled — alert lines use fast Llama; no Google AI Studio
+                      needed. Gemini is only used if Groq is off and GOOGLE_GEMINI_API_KEY is set.
+                    </p>
+                  ) : obsLinkInfo?.gemini ? (
+                    <p className="text-sky-400/90">
+                      Google Gemini is enabled for AI lines. For a strong free default, add{' '}
+                      <code className="text-sky-300/90">GROQ_API_KEY</code> from console.groq.com
+                      (Groq is tried first).
+                    </p>
+                  ) : (
+                    <p className="text-gray-500">
+                      Add <code className="text-gray-400">GROQ_API_KEY</code> (free at groq.com) for AI
+                      alert lines, or <code className="text-gray-400">GOOGLE_GEMINI_API_KEY</code>.
+                      Otherwise fixed templates are used for speech.
+                    </p>
+                  )}
+                </div>
+                </div>
               </div>
             </div>
           </div>
