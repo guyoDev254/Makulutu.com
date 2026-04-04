@@ -24,6 +24,14 @@ body {
       rgb(var(--background-end-rgb))
     )
     rgb(var(--background-start-rgb));
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent flex/grid children from forcing horizontal scroll on narrow screens */
+img,
+video {
+  max-width: 100%;
+  height: auto;
 }
 
 @layer utilities {

@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import Swal from 'sweetalert2'
 import api from '@/lib/api'
+import { SiteNav } from '@/components/SiteNav'
 
 function SuccessContent() {
   const searchParams = useSearchParams()
@@ -57,29 +58,32 @@ function SuccessContent() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
-      <div className="container mx-auto px-4 py-16">
-        <div className="max-w-2xl mx-auto">
+      <SiteNav />
+      <div className="container mx-auto max-w-7xl px-4 py-10 sm:py-14 md:py-16 pb-[max(2rem,env(safe-area-inset-bottom))]">
+        <div className="max-w-2xl mx-auto w-full min-w-0">
           {/* Success Icon */}
-          <div className="flex justify-center mb-8">
-            <div className="bg-green-500 rounded-full p-6">
-              <CheckCircle className="w-16 h-16 text-white" />
+          <div className="flex justify-center mb-6 sm:mb-8">
+            <div className="bg-green-500 rounded-full p-4 sm:p-6">
+              <CheckCircle className="w-12 h-12 sm:w-16 sm:h-16 text-white" />
             </div>
           </div>
 
           {/* Success Message */}
-          <div className="text-center mb-12">
-            <h1 className="text-4xl font-bold text-white mb-4">
+          <div className="text-center mb-8 sm:mb-12">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white mb-3 sm:mb-4 text-balance px-1">
               Payment Successful! 🎉
             </h1>
-            <p className="text-xl text-gray-300">
+            <p className="text-base sm:text-lg md:text-xl text-gray-300 px-1">
               Your subscription has been activated successfully
             </p>
           </div>
 
           {/* Subscription Details */}
           {subscription && (
-            <div className="bg-gray-800 rounded-lg p-8 mb-8">
-              <h2 className="text-2xl font-bold text-white mb-6">Subscription Details</h2>
+            <div className="bg-gray-800 rounded-lg p-5 sm:p-8 mb-6 sm:mb-8">
+              <h2 className="text-xl sm:text-2xl font-bold text-white mb-4 sm:mb-6">
+                Subscription Details
+              </h2>
               
               <div className="space-y-4">
                 <div className="flex items-center space-x-4">
@@ -137,16 +141,16 @@ function SuccessContent() {
           </div> */}
 
           {/* Actions */}
-          <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
             <Link
               href="/"
-              className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-6 rounded-lg text-center transition"
+              className="flex-1 min-h-[44px] flex items-center justify-center bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-6 rounded-lg text-center transition"
             >
               Back to Home
             </Link>
             <Link
               href="/subscribe"
-              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg text-center transition"
+              className="flex-1 min-h-[44px] flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg text-center transition"
             >
               Subscribe Again
             </Link>

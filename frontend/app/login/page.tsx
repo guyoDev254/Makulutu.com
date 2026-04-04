@@ -53,15 +53,15 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <div className="bg-gray-800/50 backdrop-blur-lg rounded-2xl shadow-2xl border border-gray-700/50 p-8">
+    <div className="min-h-dvh bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center px-4 py-10 sm:py-12">
+      <div className="w-full max-w-md min-w-0">
+        <div className="bg-gray-800/50 backdrop-blur-lg rounded-2xl shadow-2xl border border-gray-700/50 p-5 sm:p-8">
           {/* Header */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full mb-4">
-              <Lock className="w-8 h-8 text-white" />
+          <div className="text-center mb-6 sm:mb-8">
+            <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full mb-3 sm:mb-4">
+              <Lock className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
             </div>
-            <h1 className="text-3xl font-bold text-white mb-2">Admin Login</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2">Admin Login</h1>
             <p className="text-gray-400">Enter your credentials to access the dashboard</p>
           </div>
 

@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import Link from 'next/link'
 import { CheckCircle, XCircle, Loader2, Phone } from 'lucide-react'
+import { SiteNav } from '@/components/SiteNav'
 import Swal from 'sweetalert2'
 import { subscriptionApi, RegisterSubscriptionDto } from '@/lib/api'
 
@@ -177,26 +178,16 @@ export default function Subscribe() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
-      {/* Navigation */}
-      <nav className="container mx-auto px-4 py-6">
-        <div className="flex justify-between items-center">
-          <Link href="/" className="text-2xl font-bold text-white">GamerStream</Link>
-          <div className="space-x-6">
-            <Link href="/" className="text-white hover:text-purple-300">Home</Link>
-            <Link href="/about" className="text-white hover:text-purple-300">About</Link>
-            <Link href="/subscribe" className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg">
-              Subscribe
-            </Link>
-          </div>
-        </div>
-      </nav>
+      <SiteNav />
 
       {/* Subscription Form */}
-      <section className="container mx-auto px-4 py-20">
-        <div className="max-w-2xl mx-auto">
-          <div className="bg-gray-800 rounded-lg p-8 shadow-xl">
-            <h1 className="text-4xl font-bold text-white mb-2">Subscribe Now</h1>
-            <p className="text-gray-400 mb-8">
+      <section className="container mx-auto max-w-7xl px-4 py-10 sm:py-16 md:py-20">
+        <div className="max-w-2xl mx-auto w-full min-w-0">
+          <div className="bg-gray-800 rounded-lg p-4 sm:p-6 md:p-8 shadow-xl">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white mb-2 text-balance">
+              Subscribe Now
+            </h1>
+            <p className="text-gray-400 mb-6 sm:mb-8 text-sm sm:text-base">
               Get exclusive access to live streams, tutorials, and community content
             </p>
 
@@ -303,9 +294,9 @@ export default function Subscribe() {
                 </div>
 
                 <div className="bg-gray-700 rounded-lg p-4">
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-300">Total Amount:</span>
-                    <span className="text-2xl font-bold text-white">KES {totalAmount}</span>
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0">
+                    <span className="text-gray-300 text-sm sm:text-base">Total Amount:</span>
+                    <span className="text-xl sm:text-2xl font-bold text-white">KES {totalAmount}</span>
                   </div>
                 </div>
 
@@ -360,7 +351,7 @@ export default function Subscribe() {
       </section>
 
       {/* Footer */}
-      <footer className="container mx-auto px-4 py-8 border-t border-gray-800">
+      <footer className="container mx-auto max-w-7xl px-4 py-8 pb-[max(2rem,env(safe-area-inset-bottom))] border-t border-gray-800">
         <div className="text-center text-gray-400">
           <p>&copy; 2024 GamerStream. All rights reserved.</p>
         </div>

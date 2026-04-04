@@ -922,44 +922,48 @@ export default function AdminDashboard() {
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
       {/* Header */}
       <header className="bg-gray-800/50 backdrop-blur-lg border-b border-gray-700/50 sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+        <div className="container mx-auto max-w-[1600px] px-3 sm:px-4 py-3 sm:py-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent truncate">
                 Admin Dashboard
               </h1>
-              <p className="text-gray-400 text-sm mt-1">Manage your subscription platform</p>
+              <p className="text-gray-400 text-xs sm:text-sm mt-1">
+                Manage your subscription platform
+              </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full lg:w-auto lg:justify-end">
               {adminUser && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-gray-700/50 rounded-lg">
-                  <UserIcon className="w-4 h-4 text-gray-400" />
-                  <span className="text-sm text-gray-300">{adminUser.username}</span>
-                  <span className="text-xs text-gray-500 uppercase">({adminUser.role})</span>
+                <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 bg-gray-700/50 rounded-lg min-w-0 max-w-full">
+                  <UserIcon className="w-4 h-4 text-gray-400 shrink-0" />
+                  <span className="text-xs sm:text-sm text-gray-300 truncate">{adminUser.username}</span>
+                  <span className="text-[10px] sm:text-xs text-gray-500 uppercase shrink-0 hidden sm:inline">
+                    ({adminUser.role})
+                  </span>
                 </div>
               )}
               <button
                 onClick={() => setShowChangePasswordModal(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition"
+                className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition text-sm"
                 title="Change password"
               >
-                <Lock className="w-4 h-4" />
-                Change password
+                <Lock className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">Change password</span>
               </button>
               <button
                 onClick={handleRefresh}
                 disabled={refreshing}
-                className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition disabled:opacity-50"
+                className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition disabled:opacity-50 text-sm"
               >
-                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-                Refresh
+                <RefreshCw className={`w-4 h-4 shrink-0 ${refreshing ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
               </button>
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
+                className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] bg-red-600 hover:bg-red-700 text-white rounded-lg transition text-sm"
               >
-                <LogOut className="w-4 h-4" />
-                Logout
+                <LogOut className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">Logout</span>
               </button>
             </div>
           </div>
@@ -968,8 +972,8 @@ export default function AdminDashboard() {
 
       {/* Tabs */}
       <div className="bg-gray-800/30 backdrop-blur-sm border-b border-gray-700/50">
-        <div className="container mx-auto px-4">
-          <div className="flex space-x-1 overflow-x-auto">
+        <div className="container mx-auto max-w-[1600px] px-2 sm:px-4">
+          <div className="flex space-x-1 overflow-x-auto pb-px touch-pan-x [-webkit-overflow-scrolling:touch]">
             {[
               { id: 'overview', label: 'Overview', icon: BarChart3 },
               { id: 'users', label: 'Users', icon: Users },
@@ -986,7 +990,7 @@ export default function AdminDashboard() {
                     setSearchQuery('')
                     setStatusFilter('all')
                   }}
-                  className={`flex items-center gap-2 px-6 py-4 font-semibold transition whitespace-nowrap ${
+                  className={`flex items-center gap-2 px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base font-semibold transition whitespace-nowrap shrink-0 ${
                     activeTab === tab.id
                       ? 'text-purple-400 border-b-2 border-purple-400 bg-purple-500/10'
                       : 'text-gray-400 hover:text-white hover:bg-gray-700/30'
@@ -1002,7 +1006,7 @@ export default function AdminDashboard() {
       </div>
 
       {/* Content */}
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto max-w-[1600px] px-3 sm:px-4 py-6 sm:py-8 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         {activeTab === 'overview' && stats && (
           <div className="space-y-6">
             {/* Stats Cards */}
@@ -1335,12 +1339,12 @@ export default function AdminDashboard() {
 
             {/* Users Table */}
             <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full">
+              <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
+                <table className="w-full min-w-[720px]">
                   <thead className="bg-gray-700/50">
                     <tr>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">User</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">TikTok</th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">User</th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">TikTok</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">M-Pesa</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">WhatsApp</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">WhatsApp Group</th>
@@ -1492,12 +1496,12 @@ export default function AdminDashboard() {
 
             {/* Subscriptions Table */}
             <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full">
+              <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
+                <table className="w-full min-w-[800px]">
                   <thead className="bg-gray-700/50">
                     <tr>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">User</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Months</th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">User</th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Months</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Start Date</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">End Date</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Status</th>
@@ -1613,12 +1617,12 @@ export default function AdminDashboard() {
 
             {/* Payments Table */}
             <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full">
+              <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
+                <table className="w-full min-w-[760px]">
                   <thead className="bg-gray-700/50">
                     <tr>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">User</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Amount</th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">User</th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Amount</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Months</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Status</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Transaction ID</th>
