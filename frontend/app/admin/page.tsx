@@ -57,6 +57,8 @@ interface DashboardStats {
     pending: number
     failed: number
     totalAmount: number
+    subscriptionAmount: number
+    shoutoutAmount: number
   }
 }
 
@@ -111,7 +113,8 @@ export default function AdminDashboard() {
     status: 'active',
   })
   const [obsTestUsername, setObsTestUsername] = useState('TestCreator')
-  const [obsTestKind, setObsTestKind] = useState<'new' | 'renewal'>('new')
+  const [obsTestKind, setObsTestKind] = useState<'new' | 'renewal' | 'shoutout'>('new')
+  const [obsTestAmountKes, setObsTestAmountKes] = useState('')
   const [obsTestMessage, setObsTestMessage] = useState('')
   const [obsTestLoading, setObsTestLoading] = useState(false)
   const [obsLinkInfo, setObsLinkInfo] = useState<{
@@ -692,12 +695,22 @@ export default function AdminDashboard() {
     const trimmedMessage = obsTestMessage.trim()
     setObsTestLoading(true)
     try {
+      const amountParsed = obsTestAmountKes.trim()
+        ? Math.round(Number(obsTestAmountKes))
+        : NaN
+      const amountOk = Number.isFinite(amountParsed) && amountParsed >= 0
       const res = await api.post('/admin/obs-alerts/test', {
         tiktokUsername: trimmed,
         kind: obsTestKind,
         languageCode: obsTestLanguage,
         ...(obsTestSkipGemini ? { skipGemini: true } : {}),
         ...(trimmedMessage ? { announcementText: trimmedMessage.slice(0, 500) } : {}),
+        ...(amountOk && obsTestKind === 'shoutout'
+          ? { shoutoutAmountKes: amountParsed }
+          : {}),
+        ...(amountOk && obsTestKind !== 'shoutout'
+          ? { subscriptionAmountKes: amountParsed }
+          : {}),
       })
       const enabled = res.data?.obsEnabled !== false
       const sseListeners = res.data?.sseListeners as number | undefined
@@ -1093,7 +1106,21 @@ export default function AdminDashboard() {
                 </div>
                 <h3 className="text-gray-400 text-sm mb-1">Total Revenue</h3>
                 <p className="text-3xl font-bold text-white mb-2">{formatAmountForRole(stats.payments.totalAmount)}</p>
-                <p className="text-sm text-gray-400">{stats.payments.total} total transactions</p>
+                <div className="text-sm space-y-1">
+                  <p className="text-purple-300/90">
+                    Subscriptions:{' '}
+                    <span className="font-semibold text-white">
+                      {formatAmountForRole(stats.payments.subscriptionAmount ?? 0)}
+                    </span>
+                  </p>
+                  <p className="text-cyan-300/90">
+                    Shoutouts:{' '}
+                    <span className="font-semibold text-white">
+                      {formatAmountForRole(stats.payments.shoutoutAmount ?? 0)}
+                    </span>
+                  </p>
+                </div>
+                <p className="text-sm text-gray-400 mt-2">{stats.payments.total} total transactions</p>
               </div>
             </div>
 
@@ -1178,20 +1205,37 @@ export default function AdminDashboard() {
                     <select
                       value={obsTestKind}
                       onChange={(e) =>
-                        setObsTestKind(e.target.value as 'new' | 'renewal')
+                        setObsTestKind(e.target.value as 'new' | 'renewal' | 'shoutout')
                       }
                       className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
                     >
                       <option value="new">New subscriber</option>
                       <option value="renewal">Resubscribed</option>
+                      <option value="shoutout">Shoutout</option>
                     </select>
+                  </div>
+                  <div className="min-w-[100px]">
+                    <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                      {obsTestKind === 'shoutout' ? 'Shoutout KES' : 'Subscription KES'}
+                      <span className="text-gray-600 font-normal"> (opt.)</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={obsTestAmountKes}
+                      onChange={(e) => setObsTestAmountKes(e.target.value)}
+                      placeholder="—"
+                      className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
+                    />
                   </div>
                   <label className="flex items-center gap-2 text-xs text-gray-400 self-end pb-1 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={obsTestSkipGemini}
                       onChange={(e) => setObsTestSkipGemini(e.target.checked)}
-                      className="rounded border-gray-600 bg-gray-900 text-fuchsia-600 focus:ring-fuchsia-500"
+                      disabled={obsTestKind === 'shoutout'}
+                      className="rounded border-gray-600 bg-gray-900 text-fuchsia-600 focus:ring-fuchsia-500 disabled:opacity-40"
                     />
                     Skip AI line
                   </label>
