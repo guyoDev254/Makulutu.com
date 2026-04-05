@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { 
   Users, 
@@ -39,6 +39,13 @@ import {
 } from 'lucide-react'
 import Swal from 'sweetalert2'
 import api, { apiNetworkErrorHint, isAxiosNetworkError } from '@/lib/api'
+import {
+  appendObsPlayerVoiceParams,
+  OBS_BROWSER_VOICE_OPTIONS,
+  OBS_GOOGLE_VOICE_OPTIONS,
+  OBS_TTS_GENDER_OPTIONS,
+  resolveObsPlayerDisplayUrl,
+} from '@/lib/obs-player-voice'
 import { isAuthenticated, getAdminUser, clearAuth } from '@/lib/auth'
 
 interface DashboardStats {
@@ -138,6 +145,9 @@ export default function AdminDashboard() {
   const [obsRevokeId, setObsRevokeId] = useState<string | null>(null)
   const [obsTestLanguage, setObsTestLanguage] = useState('en-US')
   const [obsTestSkipGemini, setObsTestSkipGemini] = useState(false)
+  const [obsGoogleVoice, setObsGoogleVoice] = useState('')
+  const [obsBrowserVoice, setObsBrowserVoice] = useState('')
+  const [obsTtsGender, setObsTtsGender] = useState('')
 
   // Debounce search
   useEffect(() => {
@@ -223,15 +233,29 @@ export default function AdminDashboard() {
   }, [activeTab, loading])
 
   const apiPublicBase = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '')
-  const obsPasteUrl = (() => {
+
+  const obsVoiceParams = useMemo(
+    () => ({
+      googleVoice: obsGoogleVoice || undefined,
+      browserVoice: obsBrowserVoice || undefined,
+      ttsGender: obsTtsGender || undefined,
+    }),
+    [obsGoogleVoice, obsBrowserVoice, obsTtsGender],
+  )
+
+  const obsPasteUrlRaw = useMemo(() => {
     if (!obsLinkInfo) return ''
-    if (obsLinkInfo.playerUrl) return obsLinkInfo.playerUrl
-    const path = obsLinkInfo.copyUrl
-    if (path?.startsWith('/') && apiPublicBase) {
-      return `${apiPublicBase}${path}`
-    }
-    return path ?? ''
-  })()
+    return resolveObsPlayerDisplayUrl(
+      obsLinkInfo.playerUrl,
+      obsLinkInfo.copyUrl,
+      apiPublicBase,
+    )
+  }, [obsLinkInfo, apiPublicBase])
+
+  const obsPasteUrl = useMemo(
+    () => appendObsPlayerVoiceParams(obsPasteUrlRaw, obsVoiceParams),
+    [obsPasteUrlRaw, obsVoiceParams],
+  )
 
   const copyObsPasteUrl = async () => {
     const text = obsPasteUrl
@@ -780,14 +804,27 @@ export default function AdminDashboard() {
       const res = await api.post('/admin/obs-stream-links', {
         ...(label ? { label } : {}),
       })
-      const url = res.data?.playerUrl || res.data?.copyUrl
+      const rawUrl = resolveObsPlayerDisplayUrl(
+        res.data?.playerUrl,
+        res.data?.copyUrl,
+        apiPublicBase,
+      )
+      const url = rawUrl
+        ? appendObsPlayerVoiceParams(rawUrl, obsVoiceParams)
+        : ''
       await loadObsAlerts()
       setObsNewLinkLabel('')
+      const esc = (t: string) =>
+        t
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
       await Swal.fire({
         icon: 'success',
         title: 'Unique OBS link created',
         html: url
-          ? `<p class="text-sm text-left mb-2">Copy this into OBS → Browser Source → URL. The token is shown only once; save it somewhere safe.</p><p class="text-xs font-mono break-all text-left bg-gray-900 p-2 rounded">${url}</p>`
+          ? `<p class="text-sm text-left mb-2">Copy this into OBS → Browser Source → URL. Voice options from the dropdowns are included. Save the token somewhere safe.</p><p class="text-xs font-mono break-all text-left bg-gray-900 p-2 rounded">${esc(url)}</p>`
           : '<p>Link created. Set OBS_PLAYER_BASE_URL on the API to see a full URL here.</p>',
         confirmButtonColor: '#c026d3',
       })
@@ -1272,6 +1309,66 @@ export default function AdminDashboard() {
               </div>
 
               <div className="border-t border-fuchsia-500/20 pt-4 space-y-4">
+                <div className="rounded-lg border border-fuchsia-500/15 bg-gray-900/25 p-4 space-y-3">
+                  <h4 className="text-sm font-semibold text-white">Voice (applied to OBS URL)</h4>
+                  <p className="text-xs text-gray-500">
+                    Set these before you <strong className="text-gray-400">Generate link</strong> or{' '}
+                    <strong className="text-gray-400">Copy</strong>. <code className="text-gray-400">voice</code>{' '}
+                    is for Google Cloud TTS; <code className="text-gray-400">browserVoice</code> matches a
+                    name in OBS&apos;s built-in browser when cloud TTS is off or fails.
+                  </p>
+                  <div className="grid sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                        Google Cloud voice
+                      </label>
+                      <select
+                        value={obsGoogleVoice}
+                        onChange={(e) => setObsGoogleVoice(e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-900/70 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+                      >
+                        {OBS_GOOGLE_VOICE_OPTIONS.map((o) => (
+                          <option key={o.value || 'default'} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                        Browser fallback voice
+                      </label>
+                      <select
+                        value={obsBrowserVoice}
+                        onChange={(e) => setObsBrowserVoice(e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-900/70 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+                      >
+                        {OBS_BROWSER_VOICE_OPTIONS.map((o) => (
+                          <option key={o.value || 'default-b'} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                        Browser gender bias
+                      </label>
+                      <select
+                        value={obsTtsGender}
+                        onChange={(e) => setObsTtsGender(e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-900/70 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+                      >
+                        {OBS_TTS_GENDER_OPTIONS.map((o) => (
+                          <option key={o.value || 'default-g'} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
                 {isAdminOrSuper() && (
                   <div className="rounded-lg border border-fuchsia-500/20 bg-gray-900/30 p-4 space-y-3">
                     <div>
