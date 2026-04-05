@@ -103,4 +103,36 @@ export const subscriptionApi = {
   },
 };
 
+export type StreamAlertPlatform =
+  | 'tiktok'
+  | 'instagram'
+  | 'youtube'
+  | 'facebook'
+  | 'x'
+  | 'twitch'
+  | 'other';
+
+export interface StreamAlertCheckoutDto {
+  displayHandle: string;
+  mpesaMobile: string;
+  platform: StreamAlertPlatform;
+  /** KES amount; minimum 10. */
+  amount: number;
+  message?: string;
+}
+
+export interface StreamAlertCheckoutResponse {
+  payment: { id: string; amount: number; status: string; transactionRequestId?: string };
+  message: string;
+}
+
+export const streamAlertApi = {
+  checkout: async (
+    data: StreamAlertCheckoutDto,
+  ): Promise<StreamAlertCheckoutResponse> => {
+    const response = await api.post('/stream-alerts/checkout', data);
+    return response.data;
+  },
+};
+
 export default api;

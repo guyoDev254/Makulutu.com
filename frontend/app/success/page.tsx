@@ -35,6 +35,8 @@ function SuccessContent() {
   const fetchSubscriptionDetails = async () => {
     if (!paymentId) return
     try {
+      // Status route runs completion + OBS catch-up when payment is already COMPLETED (e.g. webhook won the race).
+      await api.get(`/payments/${paymentId}/status`)
       const paymentRes = await api.get(`/payments/${paymentId}`)
       const payment = paymentRes.data
       if (payment.user?.id) {

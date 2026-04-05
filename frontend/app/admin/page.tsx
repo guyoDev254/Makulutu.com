@@ -84,6 +84,8 @@ export default function AdminDashboard() {
   const [usersPagination, setUsersPagination] = useState<PaginationInfo>({ page: 1, limit: 10, total: 0, totalPages: 0 })
   const [subscriptionsPagination, setSubscriptionsPagination] = useState<PaginationInfo>({ page: 1, limit: 10, total: 0, totalPages: 0 })
   const [paymentsPagination, setPaymentsPagination] = useState<PaginationInfo>({ page: 1, limit: 10, total: 0, totalPages: 0 })
+  /** Admin payments list: subscription vs stream shoutout checkouts */
+  const [paymentsPurpose, setPaymentsPurpose] = useState<'SUBSCRIPTION' | 'STREAM_ALERT'>('SUBSCRIPTION')
   
   // Search and filter states
   const [searchQuery, setSearchQuery] = useState('')
@@ -110,6 +112,7 @@ export default function AdminDashboard() {
   })
   const [obsTestUsername, setObsTestUsername] = useState('TestCreator')
   const [obsTestKind, setObsTestKind] = useState<'new' | 'renewal'>('new')
+  const [obsTestMessage, setObsTestMessage] = useState('')
   const [obsTestLoading, setObsTestLoading] = useState(false)
   const [obsLinkInfo, setObsLinkInfo] = useState<{
     enabled: boolean
@@ -168,7 +171,7 @@ export default function AdminDashboard() {
     } else if (activeTab === 'settings') {
       fetchSettings()
     }
-  }, [activeTab, debouncedSearch, statusFilter, usersPagination.page, subscriptionsPagination.page, paymentsPagination.page])
+  }, [activeTab, debouncedSearch, statusFilter, usersPagination.page, subscriptionsPagination.page, paymentsPagination.page, paymentsPurpose])
 
   const obsLinkLoadError = (err: unknown) => ({
     enabled: false,
@@ -329,7 +332,8 @@ export default function AdminDashboard() {
       })
       if (debouncedSearch) params.append('search', debouncedSearch)
       if (statusFilter !== 'all') params.append('status', statusFilter.toUpperCase())
-      
+      params.append('purpose', paymentsPurpose)
+
       const res = await api.get(`/admin/payments?${params}`)
       setPayments(res.data.data || [])
       setPaymentsPagination(res.data.pagination)
@@ -572,7 +576,7 @@ export default function AdminDashboard() {
   }
 
   const handleEditPayment = (payment: any) => {
-    if (payment.status.toLowerCase() !== 'pending') {
+    if (payment.status?.toLowerCase() !== 'pending') {
       Swal.fire({
         icon: 'warning',
         title: 'Cannot Edit',
@@ -685,6 +689,7 @@ export default function AdminDashboard() {
 
   const handleTestObsAlert = async () => {
     const trimmed = obsTestUsername.trim().replace(/^@+/, '') || 'TestCreator'
+    const trimmedMessage = obsTestMessage.trim()
     setObsTestLoading(true)
     try {
       const res = await api.post('/admin/obs-alerts/test', {
@@ -692,6 +697,7 @@ export default function AdminDashboard() {
         kind: obsTestKind,
         languageCode: obsTestLanguage,
         ...(obsTestSkipGemini ? { skipGemini: true } : {}),
+        ...(trimmedMessage ? { announcementText: trimmedMessage.slice(0, 500) } : {}),
       })
       const enabled = res.data?.obsEnabled !== false
       const sseListeners = res.data?.sseListeners as number | undefined
@@ -706,20 +712,37 @@ export default function AdminDashboard() {
         })
         return
       }
+      const customNote = trimmedMessage ? ' Custom message included (AI skipped for that line).' : ''
       Swal.fire({
         icon: 'success',
         title: 'Alert sent',
         text: enabled
-          ? `OBS should show @${trimmed} (${obsTestKind}). ${typeof sseListeners === 'number' ? `${sseListeners} listener(s) connected.` : ''}`.trim()
+          ? `OBS should show @${trimmed} (${obsTestKind}).${customNote} ${typeof sseListeners === 'number' ? `${sseListeners} listener(s) connected.` : ''}`.trim()
           : `Event emitted (dev mode). In production, set OBS_ALERT_SECRET and use the player URL with the same token, or the Browser Source will not connect.`,
         timer: enabled ? 2800 : 4500,
         showConfirmButton: false,
       })
     } catch (error: any) {
       const d = error.response?.data
+      const formatValidationMessage = (m: unknown): string | null => {
+        if (typeof m === 'string') return m
+        if (!Array.isArray(m)) return null
+        return m
+          .map((item) =>
+            typeof item === 'string'
+              ? item
+              : item && typeof item === 'object' && 'constraints' in item
+                ? Object.values((item as { constraints: Record<string, string> }).constraints).join(
+                    ', ',
+                  )
+                : JSON.stringify(item),
+          )
+          .filter(Boolean)
+          .join('; ')
+      }
       let msg =
         (typeof d?.message === 'string' && d.message) ||
-        (Array.isArray(d?.message) && d.message.join('; ')) ||
+        formatValidationMessage(d?.message) ||
         d?.error ||
         error.message ||
         'Failed to send test alert'
@@ -892,6 +915,20 @@ export default function AdminDashboard() {
       hour: '2-digit',
       minute: '2-digit'
     })
+  }
+
+  const shoutoutPlatformLabel = (code: string | null | undefined) => {
+    const labels: Record<string, string> = {
+      tiktok: 'TikTok',
+      instagram: 'Instagram',
+      youtube: 'YouTube',
+      facebook: 'Facebook',
+      x: 'X',
+      twitch: 'Twitch',
+      other: 'Other',
+    }
+    const k = (code || '').toLowerCase()
+    return labels[k] || (code ? String(code) : '—')
   }
 
   const getStatusBadge = (status: string) => {
@@ -1171,6 +1208,22 @@ export default function AdminDashboard() {
                     )}
                     Test alert
                   </button>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                    Alert message <span className="text-gray-600 font-normal">(optional)</span>
+                  </label>
+                  <textarea
+                    value={obsTestMessage}
+                    onChange={(e) => setObsTestMessage(e.target.value)}
+                    rows={2}
+                    maxLength={500}
+                    placeholder="Same as public subscribe: short line for OBS / TTS (skips AI when set)"
+                    className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm resize-y min-h-[4.5rem]"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Max 500 characters. Leave empty to use the normal template or AI line.
+                  </p>
                 </div>
               </div>
 
@@ -1584,13 +1637,48 @@ export default function AdminDashboard() {
         {/* Payments Tab */}
         {activeTab === 'payments' && (
           <div className="space-y-6">
+            <div className="flex flex-wrap gap-2 p-1 bg-gray-800/80 rounded-xl border border-gray-700/60 w-fit">
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentsPurpose('SUBSCRIPTION')
+                  setPaymentsPagination((p) => ({ ...p, page: 1 }))
+                }}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                  paymentsPurpose === 'SUBSCRIPTION'
+                    ? 'bg-purple-600 text-white shadow'
+                    : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+              >
+                Subscription payments
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentsPurpose('STREAM_ALERT')
+                  setPaymentsPagination((p) => ({ ...p, page: 1 }))
+                }}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
+                  paymentsPurpose === 'STREAM_ALERT'
+                    ? 'bg-cyan-600 text-white shadow'
+                    : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                }`}
+              >
+                Shoutout payments
+              </button>
+            </div>
+
             {/* Search, Filter and Actions */}
             <div className="flex flex-col md:flex-row gap-4">
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search payments by user, transaction ID, or reference..."
+                  placeholder={
+                    paymentsPurpose === 'SUBSCRIPTION'
+                      ? 'Search by user, transaction ID, or reference...'
+                      : 'Search by user, @handle, message, transaction, or reference...'
+                  }
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
@@ -1607,7 +1695,14 @@ export default function AdminDashboard() {
                 <option value="failed">Failed</option>
               </select>
               <button
-                onClick={() => exportToCSV(payments, 'payments')}
+                onClick={() =>
+                  exportToCSV(
+                    payments,
+                    paymentsPurpose === 'SUBSCRIPTION'
+                      ? 'payments-subscriptions'
+                      : 'payments-shoutouts',
+                  )
+                }
                 className="flex items-center gap-2 px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition"
               >
                 <Download className="w-4 h-4" />
@@ -1623,7 +1718,11 @@ export default function AdminDashboard() {
                     <tr>
                       <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">User</th>
                       <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Amount</th>
-                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Months</th>
+                      {paymentsPurpose === 'SUBSCRIPTION' ? (
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Months</th>
+                      ) : (
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Shoutout</th>
+                      )}
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Status</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Transaction ID</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Date</th>
@@ -1644,19 +1743,35 @@ export default function AdminDashboard() {
                             <div className="font-medium text-white">{payment.user?.name || 'N/A'}</div>
                             <div className="text-sm text-gray-400">{payment.user?.mpesaMobile || 'N/A'}</div>
                           </td>
-                          <td className="px-6 py-4 text-gray-300 font-semibold">{formatAmountForRole(Number(payment.amount))}</td>
-                          <td className="px-6 py-4 text-gray-300">{payment.months} month{payment.months !== 1 ? 's' : ''}</td>
+                          <td className="px-6 py-4 text-gray-300 font-semibold">{formatAmountForRole(Number(payment.amount ?? 0))}</td>
+                          {paymentsPurpose === 'SUBSCRIPTION' ? (
+                            <td className="px-6 py-4 text-gray-300">
+                              {payment.months != null ? `${payment.months} month${payment.months !== 1 ? 's' : ''}` : '—'}
+                            </td>
+                          ) : (
+                            <td className="px-6 py-4 text-gray-300 text-sm max-w-[220px]">
+                              <div className="text-cyan-300/90 font-medium">{shoutoutPlatformLabel(payment.streamAlertPlatform)}</div>
+                              <div className="text-white mt-0.5">@{payment.streamAlertHandle || payment.user?.tiktokUsername || '—'}</div>
+                              {payment.streamAlertMessage ? (
+                                <div className="text-gray-400 mt-1 line-clamp-2" title={payment.streamAlertMessage}>
+                                  {payment.streamAlertMessage}
+                                </div>
+                              ) : (
+                                <div className="text-gray-500 mt-1 italic">No message</div>
+                              )}
+                            </td>
+                          )}
                           <td className="px-6 py-4">
-                            <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${getStatusBadge(payment.status)}`}>
+                            <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${getStatusBadge(payment.status || '')}`}>
                               {payment.status}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-gray-300 text-sm font-mono">
                             {payment.transactionId || payment.reference || 'N/A'}
                           </td>
-                          <td className="px-6 py-4 text-gray-400 text-sm">{formatDate(payment.createdAt)}</td>
+                          <td className="px-6 py-4 text-gray-400 text-sm">{payment.createdAt ? formatDate(payment.createdAt) : '—'}</td>
                           <td className="px-6 py-4">
-                            {payment.status.toLowerCase() === 'pending' && isAdminOrSuper() && (
+                            {payment.status?.toLowerCase() === 'pending' && isAdminOrSuper() && (
                               <button
                                 onClick={() => handleEditPayment(payment)}
                                 className="p-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 rounded-lg transition"
