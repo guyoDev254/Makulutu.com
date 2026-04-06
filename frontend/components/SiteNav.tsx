@@ -7,6 +7,7 @@ import { Menu, X } from 'lucide-react'
 const links = [
   { href: '/', label: 'Home' },
   { href: '/about', label: 'About' },
+  { href: '/book', label: 'Book' },
 ]
 
 export function SiteNav() {
@@ -20,7 +21,7 @@ export function SiteNav() {
           className="text-xl sm:text-2xl font-bold text-white shrink-0 min-w-0 truncate"
           onClick={() => setOpen(false)}
         >
-          GamerStream
+          MohaGamer
         </Link>
         <button
           type="button"

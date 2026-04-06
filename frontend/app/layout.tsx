@@ -5,8 +5,8 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Gamer Portfolio - eFootball Streamer',
-  description: 'Subscribe to access exclusive eFootball streaming content',
+  title: 'MohaGamer - eFootball Streamer',
+  description: 'Subscribe to access exclusive MohaGamer streaming content',
 }
 
 export const viewport: Viewport = {

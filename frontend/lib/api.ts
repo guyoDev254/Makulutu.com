@@ -1,14 +1,8 @@
 import axios from 'axios';
 import { getAuthToken } from './auth';
+import { API_BASE_URL } from './api-origin';
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  (process.env.NODE_ENV === 'production'
-    ? 'https://mohagamer.northernbox.org'
-    : 'http://localhost:2000');
-
-/** Resolved API base (for error messages / debugging). */
-export const API_BASE_URL = API_URL;
+export { API_BASE_URL, apiNetworkErrorHint } from './api-origin';
 
 export function isAxiosNetworkError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
@@ -16,16 +10,8 @@ export function isAxiosNetworkError(error: unknown): boolean {
   return !e.response && (e.code === 'ERR_NETWORK' || e.message === 'Network Error');
 }
 
-export function apiNetworkErrorHint(): string {
-  const local = API_BASE_URL.includes('localhost') || API_BASE_URL.includes('127.0.0.1')
-  if (local) {
-    return `Cannot reach ${API_BASE_URL}. Start the API (e.g. backend on port 2000) and check NEXT_PUBLIC_API_URL in frontend/.env.`
-  }
-  return `Cannot reach ${API_BASE_URL}. On Vercel, set NEXT_PUBLIC_API_URL to your API origin. On the API, add this site’s origin to CORS_ORIGINS (comma-separated).`
-}
-
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
