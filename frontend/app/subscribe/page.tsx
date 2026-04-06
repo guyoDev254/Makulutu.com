@@ -12,8 +12,15 @@ import {
   subscriptionApi,
   streamAlertApi,
   RegisterSubscriptionDto,
+  type StreamAlertLimits,
   type StreamAlertPlatform,
 } from '@/lib/api'
+
+const DEFAULT_STREAM_LIMITS: StreamAlertLimits = {
+  minKes: 10,
+  minKesWithVideo: 50,
+  maxKes: 500_000,
+}
 
 const subscriptionSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
@@ -28,7 +35,6 @@ type SubscriptionFormData = z.infer<typeof subscriptionSchema>
 
 const streamPlatformSchema = z.enum([
   'tiktok',
-  'instagram',
   'youtube',
   'facebook',
   'x',
@@ -36,25 +42,64 @@ const streamPlatformSchema = z.enum([
   'other',
 ])
 
-const streamAlertSchema = z.object({
-  displayHandle: z.string().min(1, 'Handle is required').max(64),
-  mpesaMobile: z.string().regex(/^(254|0)[0-9]{9}$/, 'Invalid phone number format'),
-  platform: streamPlatformSchema,
-  amount: z
-    .number({ invalid_type_error: 'Enter a valid amount' })
-    .min(10, 'Minimum amount is KES 10')
-    .max(500_000, 'Maximum amount is KES 500,000'),
-  message: z
-    .string()
-    .max(100, 'Message must be 100 characters or less')
-    .optional(),
-})
+const streamAlertSchema = z
+  .object({
+    displayHandle: z.string().min(1, 'Handle is required').max(64),
+    mpesaMobile: z.string().regex(/^(254|0)[0-9]{9}$/, 'Invalid phone number format'),
+    platform: streamPlatformSchema,
+    amount: z
+      .number({ invalid_type_error: 'Enter a valid amount' })
+      .min(1, 'Enter a valid amount')
+      .max(10_000_000, 'Amount is too large'),
+    message: z
+      .string()
+      .max(100, 'Message must be 100 characters or less')
+      .optional(),
+    videoUrl: z.string().max(500).optional(),
+  })
+  .superRefine((data, ctx) => {
+    const raw = data.videoUrl?.trim()
+    if (!raw) return
+    let u: URL
+    try {
+      u = new URL(raw.includes('://') ? raw : `https://${raw}`)
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid video URL',
+        path: ['videoUrl'],
+      })
+      return
+    }
+    if (u.protocol !== 'https:') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Video link must use https',
+        path: ['videoUrl'],
+      })
+      return
+    }
+    const h = u.hostname.toLowerCase()
+    const allowed =
+      h === 'tiktok.com' ||
+      h === 'www.tiktok.com' ||
+      h === 'm.tiktok.com' ||
+      h === 'vm.tiktok.com' ||
+      h === 'vt.tiktok.com' ||
+      h.endsWith('.tiktok.com')
+    if (!allowed) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Only TikTok video links are allowed',
+        path: ['videoUrl'],
+      })
+    }
+  })
 
 type StreamAlertFormData = z.infer<typeof streamAlertSchema>
 
 const STREAM_PLATFORM_OPTIONS: { value: StreamAlertPlatform; label: string }[] = [
   { value: 'tiktok', label: 'TikTok' },
-  { value: 'instagram', label: 'Instagram' },
   { value: 'youtube', label: 'YouTube' },
   { value: 'facebook', label: 'Facebook' },
   { value: 'x', label: 'X (Twitter)' },
@@ -77,6 +122,8 @@ export default function Subscribe() {
   >('idle')
   const [streamPaymentId, setStreamPaymentId] = useState<string | null>(null)
   const [streamError, setStreamError] = useState<string | null>(null)
+  const [streamLimits, setStreamLimits] =
+    useState<StreamAlertLimits>(DEFAULT_STREAM_LIMITS)
 
   const {
     register,
@@ -103,11 +150,17 @@ export default function Subscribe() {
     defaultValues: {
       platform: 'tiktok',
       message: '',
+      videoUrl: '',
       amount: 10,
     },
   })
 
   const streamAmountKes = watchStream('amount')
+  const streamVideoUrlWatch = watchStream('videoUrl')
+  const streamWantsVideo = !!streamVideoUrlWatch?.trim()
+  const streamAmountMin = streamWantsVideo
+    ? streamLimits.minKesWithVideo
+    : streamLimits.minKes
 
   const months = watch('months')
   const totalAmount = months * monthlyPrice
@@ -297,18 +350,51 @@ export default function Subscribe() {
   }
 
   const onStreamSubmit = async (data: StreamAlertFormData) => {
+    const hasVideo = !!data.videoUrl?.trim()
+    const minReq = hasVideo
+      ? streamLimits.minKesWithVideo
+      : streamLimits.minKes
+    if (data.amount < minReq) {
+      await Swal.fire({
+        icon: 'error',
+        title: 'Amount too low',
+        text: hasVideo
+          ? `With a clip URL, the minimum is KES ${minReq}.`
+          : `Minimum shoutout amount is KES ${minReq}.`,
+        confirmButtonColor: '#dc2626',
+      })
+      return
+    }
+    if (data.amount > streamLimits.maxKes) {
+      await Swal.fire({
+        icon: 'error',
+        title: 'Amount too high',
+        text: `Maximum shoutout amount is KES ${streamLimits.maxKes}.`,
+        confirmButtonColor: '#dc2626',
+      })
+      return
+    }
+
     setStreamSubmitting(true)
     setStreamError(null)
     setStreamPaymentStatus('pending')
 
     try {
       const trimmed = data.message?.trim()
+      const videoTrim = data.videoUrl?.trim()
       const res = await streamAlertApi.checkout({
         displayHandle: data.displayHandle.trim().replace(/^@+/, ''),
         mpesaMobile: data.mpesaMobile,
         platform: data.platform,
         amount: data.amount,
         ...(trimmed ? { message: trimmed } : {}),
+        ...(videoTrim
+          ? {
+              videoUrl: videoTrim.includes('://')
+                ? videoTrim
+                : `https://${videoTrim}`,
+            }
+          : {}),
       })
 
       setStreamPaymentId(res.payment.id)
@@ -524,8 +610,7 @@ export default function Subscribe() {
                 </h2>
               </div>
               <p className="text-gray-400 mb-6 text-sm sm:text-base">
-                Separate from subscription: choose any amount <strong className="text-cyan-200">from KES 10</strong> via M-Pesa;
-                after payment succeeds your optional message goes to OBS.
+                One-time M-Pesa shoutout on the live stream (not a subscription). Stay within the limits below—a TikTok clip link raises the minimum.
               </p>
 
               {streamPaymentStatus === 'success' ? (
@@ -615,13 +700,36 @@ export default function Subscribe() {
 
                   <div>
                     <label className="block text-white font-semibold mb-2">
-                      Amount (KES) <span className="text-gray-500 font-normal">(min 10)</span>
+                      Clip URL{' '}
+                      <span className="text-gray-500 font-normal">
+                        (optional — TikTok only)
+                      </span>
+                    </label>
+                    <input
+                      {...registerStream('videoUrl')}
+                      type="url"
+                      inputMode="url"
+                      className="w-full px-4 py-3 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      placeholder="https://www.tiktok.com/@user/video/…"
+                    />
+                    {streamErrors.videoUrl && (
+                      <p className="text-red-400 mt-1">{streamErrors.videoUrl.message}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-semibold mb-2">
+                      Amount (KES){' '}
+                      <span className="text-gray-500 font-normal">
+                        (min {streamAmountMin}
+                        {streamWantsVideo ? ' with clip' : ''}, max {streamLimits.maxKes})
+                      </span>
                     </label>
                     <input
                       {...registerStream('amount', { valueAsNumber: true })}
                       type="number"
-                      min={10}
-                      max={500_000}
+                      min={streamAmountMin}
+                      max={streamLimits.maxKes}
                       step={1}
                       className="w-full px-4 py-3 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       placeholder="10"
@@ -686,7 +794,8 @@ export default function Subscribe() {
                       streamPaymentStatus === 'checking' ||
                       typeof streamAmountKes !== 'number' ||
                       Number.isNaN(streamAmountKes) ||
-                      streamAmountKes < 10
+                      streamAmountKes < streamAmountMin ||
+                      streamAmountKes > streamLimits.maxKes
                     }
                     className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-6 py-3.5 rounded-lg font-semibold transition flex items-center justify-center gap-2"
                   >

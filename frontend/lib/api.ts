@@ -105,7 +105,6 @@ export const subscriptionApi = {
 
 export type StreamAlertPlatform =
   | 'tiktok'
-  | 'instagram'
   | 'youtube'
   | 'facebook'
   | 'x'
@@ -119,6 +118,8 @@ export interface StreamAlertCheckoutDto {
   /** KES amount; minimum 10. */
   amount: number;
   message?: string;
+  /** Optional TikTok clip URL (https); server validates embed. */
+  videoUrl?: string;
 }
 
 export interface StreamAlertCheckoutResponse {
@@ -126,7 +127,17 @@ export interface StreamAlertCheckoutResponse {
   message: string;
 }
 
+export type StreamAlertLimits = {
+  minKes: number;
+  minKesWithVideo: number;
+  maxKes: number;
+};
+
 export const streamAlertApi = {
+  getLimits: async (): Promise<StreamAlertLimits> => {
+    const response = await api.get('/stream-alerts/limits');
+    return response.data;
+  },
   checkout: async (
     data: StreamAlertCheckoutDto,
   ): Promise<StreamAlertCheckoutResponse> => {

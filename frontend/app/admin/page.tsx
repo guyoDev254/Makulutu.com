@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { 
   Users, 
   CreditCard, 
@@ -32,21 +33,13 @@ import {
   Settings as SettingsIcon,
   Lock,
   Megaphone,
-  Link2,
-  Copy,
   Plus,
   Trash2,
 } from 'lucide-react'
 import Swal from 'sweetalert2'
 import api, { apiNetworkErrorHint, isAxiosNetworkError } from '@/lib/api'
-import {
-  appendObsPlayerVoiceParams,
-  OBS_BROWSER_VOICE_OPTIONS,
-  OBS_GOOGLE_VOICE_OPTIONS,
-  OBS_TTS_GENDER_OPTIONS,
-  resolveObsPlayerDisplayUrl,
-} from '@/lib/obs-player-voice'
 import { isAuthenticated, getAdminUser, clearAuth } from '@/lib/auth'
+import { DashboardCharts } from '@/components/admin/DashboardCharts'
 
 interface DashboardStats {
   users: {
@@ -67,6 +60,16 @@ interface DashboardStats {
     subscriptionAmount: number
     shoutoutAmount: number
   }
+  trends?: {
+    days: number
+    series: Array<{
+      date: string
+      label: string
+      completedPayments: number
+      revenueKes: number
+      newSubscriptions: number
+    }>
+  }
 }
 
 interface PaginationInfo {
@@ -85,14 +88,36 @@ export default function AdminDashboard() {
   const [users, setUsers] = useState<any[]>([])
   const [subscriptions, setSubscriptions] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'subscriptions' | 'payments' | 'settings'>('overview')
-  const [settings, setSettings] = useState<any>({ defaultMonthlyPrice: 1 })
-  const [settingsForm, setSettingsForm] = useState<any>({ defaultMonthlyPrice: 1 })
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'subscriptions' | 'payments' | 'shoutouts' | 'settings'>('overview')
+  const [settings, setSettings] = useState<any>({
+    defaultMonthlyPrice: 1,
+    shoutoutMinKes: 10,
+    shoutoutMinKesWithVideo: 50,
+    shoutoutMaxKes: 500_000,
+    obsAlertSecsNew: 12,
+    obsAlertSecsRenewal: 12,
+    obsAlertSecsShoutout: 12,
+    obsAlertSecsShoutoutVideo: 45,
+  })
+  const [settingsForm, setSettingsForm] = useState<any>({
+    defaultMonthlyPrice: 1,
+    shoutoutMinKes: 10,
+    shoutoutMinKesWithVideo: 50,
+    shoutoutMaxKes: 500_000,
+    obsAlertSecsNew: 12,
+    obsAlertSecsRenewal: 12,
+    obsAlertSecsShoutout: 12,
+    obsAlertSecsShoutoutVideo: 45,
+  })
   
   // Pagination states
   const [usersPagination, setUsersPagination] = useState<PaginationInfo>({ page: 1, limit: 10, total: 0, totalPages: 0 })
   const [subscriptionsPagination, setSubscriptionsPagination] = useState<PaginationInfo>({ page: 1, limit: 10, total: 0, totalPages: 0 })
   const [paymentsPagination, setPaymentsPagination] = useState<PaginationInfo>({ page: 1, limit: 10, total: 0, totalPages: 0 })
+  const [shoutouts, setShoutouts] = useState<any[]>([])
+  const [shoutoutsPagination, setShoutoutsPagination] = useState<PaginationInfo>({ page: 1, limit: 10, total: 0, totalPages: 0 })
+  const [selectedShoutoutIds, setSelectedShoutoutIds] = useState<Set<string>>(() => new Set())
+  const shoutoutsSelectAllRef = useRef<HTMLInputElement>(null)
   /** Admin payments list: subscription vs stream shoutout checkouts */
   const [paymentsPurpose, setPaymentsPurpose] = useState<'SUBSCRIPTION' | 'STREAM_ALERT'>('SUBSCRIPTION')
   
@@ -119,35 +144,6 @@ export default function AdminDashboard() {
     startDate: new Date().toISOString().split('T')[0],
     status: 'active',
   })
-  const [obsTestUsername, setObsTestUsername] = useState('TestCreator')
-  const [obsTestKind, setObsTestKind] = useState<'new' | 'renewal' | 'shoutout'>('new')
-  const [obsTestAmountKes, setObsTestAmountKes] = useState('')
-  const [obsTestMessage, setObsTestMessage] = useState('')
-  const [obsTestLoading, setObsTestLoading] = useState(false)
-  const [obsLinkInfo, setObsLinkInfo] = useState<{
-    enabled: boolean
-    playerUrl: string | null
-    copyUrl: string | null
-    message: string | null
-    cloudTts?: boolean
-    groq?: boolean
-    gemini?: boolean
-    uniqueLinks?: Array<{
-      id: string
-      label: string | null
-      tokenSuffix: string
-      createdAt: string
-    }>
-    legacyUsesSharedSecret?: boolean
-  } | null>(null)
-  const [obsNewLinkLabel, setObsNewLinkLabel] = useState('')
-  const [obsCreateLinkLoading, setObsCreateLinkLoading] = useState(false)
-  const [obsRevokeId, setObsRevokeId] = useState<string | null>(null)
-  const [obsTestLanguage, setObsTestLanguage] = useState('en-US')
-  const [obsTestSkipGemini, setObsTestSkipGemini] = useState(false)
-  const [obsGoogleVoice, setObsGoogleVoice] = useState('')
-  const [obsBrowserVoice, setObsBrowserVoice] = useState('')
-  const [obsTtsGender, setObsTtsGender] = useState('')
 
   // Debounce search
   useEffect(() => {
@@ -181,111 +177,12 @@ export default function AdminDashboard() {
       fetchSubscriptions()
     } else if (activeTab === 'payments') {
       fetchPayments()
+    } else if (activeTab === 'shoutouts') {
+      fetchStreamShoutouts()
     } else if (activeTab === 'settings') {
       fetchSettings()
     }
-  }, [activeTab, debouncedSearch, statusFilter, usersPagination.page, subscriptionsPagination.page, paymentsPagination.page, paymentsPurpose])
-
-  const obsLinkLoadError = (err: unknown) => ({
-    enabled: false,
-    playerUrl: null,
-    copyUrl: null,
-    uniqueLinks: [] as Array<{
-      id: string
-      label: string | null
-      tokenSuffix: string
-      createdAt: string
-    }>,
-    cloudTts: false,
-    groq: false,
-    gemini: false,
-    message: isAxiosNetworkError(err)
-      ? apiNetworkErrorHint()
-      : 'Could not load OBS link.',
-  })
-
-  const loadObsAlerts = () => {
-    return api
-      .get('/admin/obs-alerts/link')
-      .then((res) => {
-        setObsLinkInfo(res.data)
-        return res.data
-      })
-      .catch((err) => {
-        setObsLinkInfo(obsLinkLoadError(err))
-      })
-  }
-
-  useEffect(() => {
-    if (activeTab !== 'overview' || loading) return
-    let cancelled = false
-    api
-      .get('/admin/obs-alerts/link')
-      .then((res) => {
-        if (!cancelled) setObsLinkInfo(res.data)
-      })
-      .catch((err) => {
-        if (!cancelled) setObsLinkInfo(obsLinkLoadError(err))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [activeTab, loading])
-
-  const apiPublicBase = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '')
-
-  const obsVoiceParams = useMemo(
-    () => ({
-      googleVoice: obsGoogleVoice || undefined,
-      browserVoice: obsBrowserVoice || undefined,
-      ttsGender: obsTtsGender || undefined,
-    }),
-    [obsGoogleVoice, obsBrowserVoice, obsTtsGender],
-  )
-
-  const obsPasteUrlRaw = useMemo(() => {
-    if (!obsLinkInfo) return ''
-    return resolveObsPlayerDisplayUrl(
-      obsLinkInfo.playerUrl,
-      obsLinkInfo.copyUrl,
-      apiPublicBase,
-    )
-  }, [obsLinkInfo, apiPublicBase])
-
-  const obsPasteUrl = useMemo(
-    () => appendObsPlayerVoiceParams(obsPasteUrlRaw, obsVoiceParams),
-    [obsPasteUrlRaw, obsVoiceParams],
-  )
-
-  const copyObsPasteUrl = async () => {
-    const text = obsPasteUrl
-    if (!text) {
-      Swal.fire({
-        icon: 'info',
-        title: 'No URL yet',
-        text: obsLinkInfo?.message || 'Configure OBS on the backend first.',
-        confirmButtonColor: '#c026d3',
-      })
-      return
-    }
-    try {
-      await navigator.clipboard.writeText(text)
-      Swal.fire({
-        icon: 'success',
-        title: 'Copied',
-        text: 'Paste into OBS → Browser Source → URL',
-        timer: 1800,
-        showConfirmButton: false,
-      })
-    } catch {
-      Swal.fire({
-        icon: 'error',
-        title: 'Copy failed',
-        text: 'Select the URL in the field and copy manually.',
-        confirmButtonColor: '#dc2626',
-      })
-    }
-  }
+  }, [activeTab, debouncedSearch, statusFilter, usersPagination.page, subscriptionsPagination.page, paymentsPagination.page, paymentsPurpose, shoutoutsPagination.page])
 
   const fetchDashboardData = async () => {
     try {
@@ -375,12 +272,105 @@ export default function AdminDashboard() {
     }
   }
 
+  const fetchStreamShoutouts = async () => {
+    try {
+      const params = new URLSearchParams({
+        page: shoutoutsPagination.page.toString(),
+        limit: shoutoutsPagination.limit.toString(),
+      })
+      if (debouncedSearch) params.append('search', debouncedSearch)
+      if (statusFilter !== 'all') params.append('status', statusFilter.toUpperCase())
+
+      const res = await api.get(`/admin/stream-shoutouts?${params}`)
+      setShoutouts(res.data.data || [])
+      setShoutoutsPagination(res.data.pagination)
+    } catch (error: any) {
+      console.error('Error fetching stream shoutouts:', error)
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: error.response?.data?.message || 'Failed to load stream shoutouts (is the DB migration applied?)',
+        confirmButtonColor: '#dc2626',
+      })
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'shoutouts') {
+      setSelectedShoutoutIds(new Set())
+    }
+  }, [activeTab])
+
+  useEffect(() => {
+    const el = shoutoutsSelectAllRef.current
+    if (!el || shoutouts.length === 0) return
+    const onPage = shoutouts.filter((r) => selectedShoutoutIds.has(r.id)).length
+    el.indeterminate = onPage > 0 && onPage < shoutouts.length
+  }, [shoutouts, selectedShoutoutIds])
+
+  const toggleShoutoutSelected = (id: string) => {
+    setSelectedShoutoutIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleAllShoutoutsOnPage = (checked: boolean) => {
+    setSelectedShoutoutIds((prev) => {
+      const next = new Set(prev)
+      for (const r of shoutouts) {
+        if (checked) next.add(r.id)
+        else next.delete(r.id)
+      }
+      return next
+    })
+  }
+
+  const handleDeleteSelectedShoutouts = async () => {
+    const ids = Array.from(selectedShoutoutIds)
+    if (ids.length === 0) return
+    const result = await Swal.fire({
+      icon: 'warning',
+      title: 'Delete selected shoutouts?',
+      html: `This will remove <strong>${ids.length}</strong> shoutout record(s) and their linked payment rows. This cannot be undone.`,
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#6b7280',
+      confirmButtonText: 'Yes, delete',
+    })
+    if (!result.isConfirmed) return
+    try {
+      const res = await api.post('/admin/stream-shoutouts/delete', { ids })
+      const n = res.data?.deleted ?? 0
+      setSelectedShoutoutIds(new Set())
+      await fetchStreamShoutouts()
+      await fetchDashboardData()
+      Swal.fire({
+        icon: 'success',
+        title: 'Deleted',
+        text: n === 0 ? 'No matching rows were removed.' : `Removed ${n} payment(s) and shoutout(s).`,
+        timer: 2000,
+        showConfirmButton: false,
+      })
+    } catch (error: any) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Delete failed',
+        text: error.response?.data?.message || error.message || 'Try again.',
+        confirmButtonColor: '#dc2626',
+      })
+    }
+  }
+
   const handleRefresh = async () => {
     setRefreshing(true)
     await fetchDashboardData()
     if (activeTab === 'users') await fetchUsers()
     if (activeTab === 'subscriptions') await fetchSubscriptions()
     if (activeTab === 'payments') await fetchPayments()
+    if (activeTab === 'shoutouts') await fetchStreamShoutouts()
     if (activeTab === 'settings') await fetchSettings()
     setRefreshing(false)
     Swal.fire({
@@ -702,184 +692,25 @@ export default function AdminDashboard() {
   }
 
   const fetchSettings = async () => {
+    const settingsDefaults = {
+      defaultMonthlyPrice: 1,
+      shoutoutMinKes: 10,
+      shoutoutMinKesWithVideo: 50,
+      shoutoutMaxKes: 500_000,
+      obsAlertSecsNew: 12,
+      obsAlertSecsRenewal: 12,
+      obsAlertSecsShoutout: 12,
+      obsAlertSecsShoutoutVideo: 45,
+    }
     try {
       const res = await api.get('/admin/settings')
-      setSettings(res.data)
-      setSettingsForm(res.data)
+      const merged = { ...settingsDefaults, ...res.data }
+      setSettings(merged)
+      setSettingsForm(merged)
     } catch (error: any) {
       console.error('Error fetching settings:', error)
-      // If settings don't exist, use defaults
-      setSettings({ defaultMonthlyPrice: 1 })
-      setSettingsForm({ defaultMonthlyPrice: 1 })
-    }
-  }
-
-  const handleTestObsAlert = async () => {
-    const trimmed = obsTestUsername.trim().replace(/^@+/, '') || 'TestCreator'
-    const trimmedMessage = obsTestMessage.trim()
-    setObsTestLoading(true)
-    try {
-      const amountParsed = obsTestAmountKes.trim()
-        ? Math.round(Number(obsTestAmountKes))
-        : NaN
-      const amountOk = Number.isFinite(amountParsed) && amountParsed >= 0
-      const res = await api.post('/admin/obs-alerts/test', {
-        tiktokUsername: trimmed,
-        kind: obsTestKind,
-        languageCode: obsTestLanguage,
-        ...(obsTestSkipGemini ? { skipGemini: true } : {}),
-        ...(trimmedMessage ? { announcementText: trimmedMessage.slice(0, 500) } : {}),
-        ...(amountOk && obsTestKind === 'shoutout'
-          ? { shoutoutAmountKes: amountParsed }
-          : {}),
-        ...(amountOk && obsTestKind !== 'shoutout'
-          ? { subscriptionAmountKes: amountParsed }
-          : {}),
-      })
-      const enabled = res.data?.obsEnabled !== false
-      const sseListeners = res.data?.sseListeners as number | undefined
-      const nobodyListening =
-        enabled && typeof sseListeners === 'number' && sseListeners === 0
-      if (nobodyListening) {
-        Swal.fire({
-          icon: 'warning',
-          title: 'No OBS player connected',
-          html: `<p class="text-left text-sm">The test ran on the API, but <strong>0</strong> browsers were subscribed to the alert stream, so nothing will show in OBS.</p><ul class="text-left text-sm mt-2 pl-4 list-disc space-y-1"><li>Add a <strong>Browser Source</strong> with the URL from this page (same host as your API).</li><li>Wait until the source status shows <strong>Connected</strong>, then test again.</li><li>If the API uses a path prefix (e.g. <code>/api</code>), reload the player after deploying — the stream URL is fixed automatically.</li><li>Multiple API workers without sticky sessions each have their own subscribers; use one instance or session affinity.</li></ul>`,
-          confirmButtonColor: '#c026d3',
-        })
-        return
-      }
-      const customNote = trimmedMessage ? ' Custom message included (AI skipped for that line).' : ''
-      Swal.fire({
-        icon: 'success',
-        title: 'Alert sent',
-        text: enabled
-          ? `OBS should show @${trimmed} (${obsTestKind}).${customNote} ${typeof sseListeners === 'number' ? `${sseListeners} listener(s) connected.` : ''}`.trim()
-          : `Event emitted (dev mode). In production, set OBS_ALERT_SECRET and use the player URL with the same token, or the Browser Source will not connect.`,
-        timer: enabled ? 2800 : 4500,
-        showConfirmButton: false,
-      })
-    } catch (error: any) {
-      const d = error.response?.data
-      const formatValidationMessage = (m: unknown): string | null => {
-        if (typeof m === 'string') return m
-        if (!Array.isArray(m)) return null
-        return m
-          .map((item) =>
-            typeof item === 'string'
-              ? item
-              : item && typeof item === 'object' && 'constraints' in item
-                ? Object.values((item as { constraints: Record<string, string> }).constraints).join(
-                    ', ',
-                  )
-                : JSON.stringify(item),
-          )
-          .filter(Boolean)
-          .join('; ')
-      }
-      let msg =
-        (typeof d?.message === 'string' && d.message) ||
-        formatValidationMessage(d?.message) ||
-        d?.error ||
-        error.message ||
-        'Failed to send test alert'
-      if (isAxiosNetworkError(error)) {
-        msg = apiNetworkErrorHint()
-      }
-      Swal.fire({
-        icon: 'error',
-        title: 'Test failed',
-        text: typeof msg === 'string' ? msg : 'Check admin auth, API URL, and server logs.',
-        confirmButtonColor: '#dc2626',
-      })
-    } finally {
-      setObsTestLoading(false)
-    }
-  }
-
-  const handleCreateObsStreamLink = async () => {
-    setObsCreateLinkLoading(true)
-    try {
-      const label = obsNewLinkLabel.trim()
-      const res = await api.post('/admin/obs-stream-links', {
-        ...(label ? { label } : {}),
-      })
-      const rawUrl = resolveObsPlayerDisplayUrl(
-        res.data?.playerUrl,
-        res.data?.copyUrl,
-        apiPublicBase,
-      )
-      const url = rawUrl
-        ? appendObsPlayerVoiceParams(rawUrl, obsVoiceParams)
-        : ''
-      await loadObsAlerts()
-      setObsNewLinkLabel('')
-      const esc = (t: string) =>
-        t
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-      await Swal.fire({
-        icon: 'success',
-        title: 'Unique OBS link created',
-        html: url
-          ? `<p class="text-sm text-left mb-2">Copy this into OBS → Browser Source → URL. Voice options from the dropdowns are included. Save the token somewhere safe.</p><p class="text-xs font-mono break-all text-left bg-gray-900 p-2 rounded">${esc(url)}</p>`
-          : '<p>Link created. Set OBS_PLAYER_BASE_URL on the API to see a full URL here.</p>',
-        confirmButtonColor: '#c026d3',
-      })
-      if (url && navigator.clipboard?.writeText) {
-        try {
-          await navigator.clipboard.writeText(url)
-        } catch {
-          /* ignore */
-        }
-      }
-    } catch (error: any) {
-      Swal.fire({
-        icon: 'error',
-        title: 'Could not create link',
-        text:
-          error.response?.data?.message ||
-          error.message ||
-          'Admin role required or server error.',
-        confirmButtonColor: '#dc2626',
-      })
-    } finally {
-      setObsCreateLinkLoading(false)
-    }
-  }
-
-  const handleRevokeObsStreamLink = async (id: string) => {
-    const ok = await Swal.fire({
-      icon: 'warning',
-      title: 'Revoke this link?',
-      text: 'OBS sources using this URL will stop receiving alerts.',
-      showCancelButton: true,
-      confirmButtonText: 'Revoke',
-      cancelButtonText: 'Cancel',
-      confirmButtonColor: '#dc2626',
-    })
-    if (!ok.isConfirmed) return
-    setObsRevokeId(id)
-    try {
-      await api.delete(`/admin/obs-stream-links/${id}`)
-      await loadObsAlerts()
-      Swal.fire({
-        icon: 'success',
-        title: 'Revoked',
-        timer: 1600,
-        showConfirmButton: false,
-      })
-    } catch (error: any) {
-      Swal.fire({
-        icon: 'error',
-        title: 'Revoke failed',
-        text: error.response?.data?.message || error.message || 'Try again.',
-        confirmButtonColor: '#dc2626',
-      })
-    } finally {
-      setObsRevokeId(null)
+      setSettings(settingsDefaults)
+      setSettingsForm(settingsDefaults)
     }
   }
 
@@ -896,13 +727,66 @@ export default function AdminDashboard() {
         return
       }
 
+      const sm = Number(settingsForm.shoutoutMinKes)
+      const smv = Number(settingsForm.shoutoutMinKesWithVideo)
+      const sx = Number(settingsForm.shoutoutMaxKes)
+      if (!Number.isFinite(sm) || sm < 1) {
+        Swal.fire({ icon: 'error', title: 'Invalid', text: 'Shoutout base minimum must be at least 1 KES.', confirmButtonColor: '#dc2626' })
+        return
+      }
+      if (!Number.isFinite(smv) || smv < 1) {
+        Swal.fire({ icon: 'error', title: 'Invalid', text: 'Shoutout minimum with clip must be at least 1 KES.', confirmButtonColor: '#dc2626' })
+        return
+      }
+      if (!Number.isFinite(sx) || sx < 1) {
+        Swal.fire({ icon: 'error', title: 'Invalid', text: 'Shoutout maximum must be at least 1 KES.', confirmButtonColor: '#dc2626' })
+        return
+      }
+      if (smv < sm) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Invalid',
+          text: 'Minimum with clip must be ≥ base shoutout minimum.',
+          confirmButtonColor: '#dc2626',
+        })
+        return
+      }
+      if (sx < smv) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Invalid',
+          text: 'Maximum must be ≥ minimum with clip.',
+          confirmButtonColor: '#dc2626',
+        })
+        return
+      }
+
+      const obsSecChecks: Array<{ key: string; label: string }> = [
+        { key: 'obsAlertSecsNew', label: 'New subscriber overlay' },
+        { key: 'obsAlertSecsRenewal', label: 'Renewal overlay' },
+        { key: 'obsAlertSecsShoutout', label: 'Shoutout (no clip) overlay' },
+        { key: 'obsAlertSecsShoutoutVideo', label: 'Shoutout (with clip) overlay' },
+      ]
+      for (const { key, label } of obsSecChecks) {
+        const sec = Number(settingsForm[key])
+        if (!Number.isFinite(sec) || sec < 3 || sec > 600) {
+          Swal.fire({
+            icon: 'error',
+            title: 'Invalid',
+            text: `${label}: use 3–600 seconds.`,
+            confirmButtonColor: '#dc2626',
+          })
+          return
+        }
+      }
+
       const response = await api.put('/admin/settings', settingsForm)
       setSettings(response.data)
       setSettingsForm(response.data) // Update form with saved values
       Swal.fire({
         icon: 'success',
         title: 'Settings Updated',
-        text: `Default monthly price updated to ${formatCurrency(response.data.defaultMonthlyPrice)}`,
+        text: 'Platform settings saved.',
         timer: 2000,
         showConfirmButton: false,
       })
@@ -970,7 +854,6 @@ export default function AdminDashboard() {
   const shoutoutPlatformLabel = (code: string | null | undefined) => {
     const labels: Record<string, string> = {
       tiktok: 'TikTok',
-      instagram: 'Instagram',
       youtube: 'YouTube',
       facebook: 'Facebook',
       x: 'X',
@@ -1029,6 +912,13 @@ export default function AdminDashboard() {
                   </span>
                 </div>
               )}
+              <Link
+                href="/admin/obs-alerts"
+                className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] bg-fuchsia-900/35 hover:bg-fuchsia-800/45 text-fuchsia-100 rounded-lg border border-fuchsia-500/25 transition text-sm"
+              >
+                <Megaphone className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">OBS alerts</span>
+              </Link>
               <button
                 onClick={() => setShowChangePasswordModal(true)}
                 className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition text-sm"
@@ -1066,6 +956,7 @@ export default function AdminDashboard() {
               { id: 'users', label: 'Users', icon: Users },
               { id: 'subscriptions', label: 'Subscriptions', icon: Calendar },
               { id: 'payments', label: 'Payments', icon: CreditCard },
+              { id: 'shoutouts', label: 'Shoutouts', icon: Megaphone },
               ...(isAdminOrSuper() ? [{ id: 'settings', label: 'Settings', icon: SettingsIcon }] : []),
             ].map((tab) => {
               const Icon = tab.icon
@@ -1188,322 +1079,32 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-fuchsia-500/10 to-purple-600/5 rounded-xl p-6 border border-fuchsia-500/25 space-y-5">
-              <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-                <div className="flex gap-3">
-                  <div className="p-3 bg-fuchsia-500/20 rounded-lg shrink-0">
-                    <Megaphone className="w-6 h-6 text-fuchsia-300" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-semibold text-white">OBS subscriber alert (test)</h3>
-                    <p className="text-sm text-gray-400 mt-1 max-w-xl">
-                      Add this URL as an OBS Browser Source, keep it open, then use Test below. Real
-                      subscribers fire the same trigger automatically.
-                    </p>
-                  </div>
+            <Link
+              href="/admin/obs-alerts"
+              className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-xl p-5 border border-fuchsia-500/25 bg-gradient-to-br from-fuchsia-500/10 to-purple-600/5 hover:border-fuchsia-400/40 transition group"
+            >
+              <div className="flex gap-3 min-w-0">
+                <div className="p-3 bg-fuchsia-500/20 rounded-lg shrink-0 group-hover:bg-fuchsia-500/30 transition">
+                  <Megaphone className="w-6 h-6 text-fuchsia-300" />
                 </div>
-                <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-end gap-3 lg:min-w-[280px]">
-                  <div className="min-w-[140px]">
-                    <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                      TTS language
-                    </label>
-                    <select
-                      value={obsTestLanguage}
-                      onChange={(e) => setObsTestLanguage(e.target.value)}
-                      className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
-                    >
-                      <option value="en-US">English (US)</option>
-                      <option value="en-GB">English (UK)</option>
-                      <option value="sw-KE">Kiswahili (Kenya)</option>
-                      <option value="fr-FR">French</option>
-                      <option value="es-ES">Spanish</option>
-                      <option value="de-DE">German</option>
-                      <option value="ar-XA">Arabic</option>
-                      <option value="hi-IN">Hindi</option>
-                      <option value="zh-CN">Chinese (Mandarin)</option>
-                      <option value="ja-JP">Japanese</option>
-                      <option value="pt-BR">Portuguese (Brazil)</option>
-                    </select>
-                  </div>
-                  <div className="flex-1 min-w-[160px]">
-                    <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                      TikTok username
-                    </label>
-                    <input
-                      type="text"
-                      value={obsTestUsername}
-                      onChange={(e) => setObsTestUsername(e.target.value)}
-                      placeholder="TestCreator"
-                      className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
-                    />
-                  </div>
-                  <div className="min-w-[120px]">
-                    <label className="block text-xs font-medium text-gray-400 mb-1.5">Type</label>
-                    <select
-                      value={obsTestKind}
-                      onChange={(e) =>
-                        setObsTestKind(e.target.value as 'new' | 'renewal' | 'shoutout')
-                      }
-                      className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
-                    >
-                      <option value="new">New subscriber</option>
-                      <option value="renewal">Resubscribed</option>
-                      <option value="shoutout">Shoutout</option>
-                    </select>
-                  </div>
-                  <div className="min-w-[100px]">
-                    <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                      {obsTestKind === 'shoutout' ? 'Shoutout KES' : 'Subscription KES'}
-                      <span className="text-gray-600 font-normal"> (opt.)</span>
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={obsTestAmountKes}
-                      onChange={(e) => setObsTestAmountKes(e.target.value)}
-                      placeholder="—"
-                      className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
-                    />
-                  </div>
-                  <label className="flex items-center gap-2 text-xs text-gray-400 self-end pb-1 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={obsTestSkipGemini}
-                      onChange={(e) => setObsTestSkipGemini(e.target.checked)}
-                      disabled={obsTestKind === 'shoutout'}
-                      className="rounded border-gray-600 bg-gray-900 text-fuchsia-600 focus:ring-fuchsia-500 disabled:opacity-40"
-                    />
-                    Skip AI line
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleTestObsAlert}
-                    disabled={obsTestLoading}
-                    className="px-4 py-2 h-[38px] self-end bg-fuchsia-600 hover:bg-fuchsia-500 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50 flex items-center justify-center gap-2 shrink-0"
-                  >
-                    {obsTestLoading ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Megaphone className="w-4 h-4" />
-                    )}
-                    Test alert
-                  </button>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                    Alert message <span className="text-gray-600 font-normal">(optional)</span>
-                  </label>
-                  <textarea
-                    value={obsTestMessage}
-                    onChange={(e) => setObsTestMessage(e.target.value)}
-                    rows={2}
-                    maxLength={500}
-                    placeholder="Same as public subscribe: short line for OBS / TTS (skips AI when set)"
-                    className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm resize-y min-h-[4.5rem]"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Max 500 characters. Leave empty to use the normal template or AI line.
+                <div className="min-w-0">
+                  <h3 className="text-lg font-semibold text-white">OBS subscriber alerts</h3>
+                  <p className="text-sm text-gray-400 mt-1">
+                    Browser source URL, test alerts, voice options, and unique stream links.
                   </p>
                 </div>
               </div>
+              <span className="text-sm font-semibold text-fuchsia-300 shrink-0 sm:ml-4">
+                Open page →
+              </span>
+            </Link>
 
-              <div className="border-t border-fuchsia-500/20 pt-4 space-y-4">
-                <div className="rounded-lg border border-fuchsia-500/15 bg-gray-900/25 p-4 space-y-3">
-                  <h4 className="text-sm font-semibold text-white">Voice (applied to OBS URL)</h4>
-                  <p className="text-xs text-gray-500">
-                    Set these before you <strong className="text-gray-400">Generate link</strong> or{' '}
-                    <strong className="text-gray-400">Copy</strong>. <code className="text-gray-400">voice</code>{' '}
-                    is for Google Cloud TTS; <code className="text-gray-400">browserVoice</code> matches a
-                    name in OBS&apos;s built-in browser when cloud TTS is off or fails.
-                  </p>
-                  <div className="grid sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                        Google Cloud voice
-                      </label>
-                      <select
-                        value={obsGoogleVoice}
-                        onChange={(e) => setObsGoogleVoice(e.target.value)}
-                        className="w-full px-3 py-2 bg-gray-900/70 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
-                      >
-                        {OBS_GOOGLE_VOICE_OPTIONS.map((o) => (
-                          <option key={o.value || 'default'} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                        Browser fallback voice
-                      </label>
-                      <select
-                        value={obsBrowserVoice}
-                        onChange={(e) => setObsBrowserVoice(e.target.value)}
-                        className="w-full px-3 py-2 bg-gray-900/70 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
-                      >
-                        {OBS_BROWSER_VOICE_OPTIONS.map((o) => (
-                          <option key={o.value || 'default-b'} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                        Browser gender bias
-                      </label>
-                      <select
-                        value={obsTtsGender}
-                        onChange={(e) => setObsTtsGender(e.target.value)}
-                        className="w-full px-3 py-2 bg-gray-900/70 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
-                      >
-                        {OBS_TTS_GENDER_OPTIONS.map((o) => (
-                          <option key={o.value || 'default-g'} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {isAdminOrSuper() && (
-                  <div className="rounded-lg border border-fuchsia-500/20 bg-gray-900/30 p-4 space-y-3">
-                    <div>
-                      <h4 className="text-sm font-semibold text-white">
-                        Unique OBS links
-                      </h4>
-                      <p className="text-xs text-gray-500 mt-1">
-                        One URL per Browser Source or scene. Revoking a link does not affect others. The
-                        full URL is shown only when you generate it—copy it immediately.
-                      </p>
-                    </div>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <input
-                        type="text"
-                        value={obsNewLinkLabel}
-                        onChange={(e) => setObsNewLinkLabel(e.target.value)}
-                        placeholder="Label (optional), e.g. Main scene"
-                        className="flex-1 min-w-0 px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleCreateObsStreamLink}
-                        disabled={obsCreateLinkLoading}
-                        className="px-4 py-2 bg-fuchsia-700 hover:bg-fuchsia-600 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
-                      >
-                        {obsCreateLinkLoading ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Plus className="w-4 h-4" />
-                        )}
-                        Generate link
-                      </button>
-                    </div>
-                    {(obsLinkInfo?.uniqueLinks?.length ?? 0) > 0 && (
-                      <ul className="space-y-2">
-                        {obsLinkInfo!.uniqueLinks!.map((link) => (
-                          <li
-                            key={link.id}
-                            className="flex items-center justify-between gap-2 text-sm bg-gray-900/60 border border-gray-700/60 rounded-lg px-3 py-2"
-                          >
-                            <span className="text-gray-200 min-w-0 truncate">
-                              <span className="font-medium">
-                                {link.label || 'Unnamed source'}
-                              </span>
-                              <span className="text-gray-500 ml-2 font-mono text-xs">
-                                …{link.tokenSuffix}
-                              </span>
-                              <span className="text-gray-600 ml-2 text-xs">
-                                {new Date(link.createdAt).toLocaleString()}
-                              </span>
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => handleRevokeObsStreamLink(link.id)}
-                              disabled={obsRevokeId === link.id}
-                              className="p-2 rounded-md text-red-400 hover:bg-red-500/10 disabled:opacity-40 shrink-0"
-                              title="Revoke link"
-                            >
-                              {obsRevokeId === link.id ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <Trash2 className="w-4 h-4" />
-                              )}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
-
-                <div>
-                <label className="flex items-center gap-2 text-xs font-medium text-gray-400 mb-2">
-                  <Link2 className="w-3.5 h-3.5" />
-                  Shared secret URL {obsLinkInfo?.legacyUsesSharedSecret ? '' : '(optional)'}
-                </label>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={obsPasteUrl}
-                    placeholder={
-                      obsLinkInfo === null
-                        ? 'Loading…'
-                        : 'Set OBS_PLAYER_BASE_URL or WEBHOOK_BASE_URL on the API'
-                    }
-                    className="flex-1 min-w-0 px-3 py-2 bg-gray-900/70 border border-gray-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
-                    onClick={(e) => (e.target as HTMLInputElement).select()}
-                  />
-                  <button
-                    type="button"
-                    onClick={copyObsPasteUrl}
-                    disabled={!obsPasteUrl}
-                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shrink-0 disabled:opacity-40"
-                  >
-                    <Copy className="w-4 h-4" />
-                    Copy
-                  </button>
-                </div>
-                {obsLinkInfo?.message && (
-                  <p className="text-xs text-amber-400/90 mt-2">{obsLinkInfo.message}</p>
-                )}
-                <div className="text-xs mt-2 space-y-1">
-                  {obsLinkInfo?.cloudTts ? (
-                    <p className="text-emerald-400/90">
-                      Google Cloud TTS is enabled — high-quality speech in many languages.
-                    </p>
-                  ) : (
-                    <p className="text-gray-500">
-                      Add GOOGLE_CLOUD_TTS_API_KEY on the API for neural multilingual TTS; otherwise
-                      the OBS player uses your system browser voices.
-                    </p>
-                  )}
-                  {obsLinkInfo?.groq ? (
-                    <p className="text-sky-400/90">
-                      Groq (free tier) is enabled — alert lines use fast Llama; no Google AI Studio
-                      needed. Gemini is only used if Groq is off and GOOGLE_GEMINI_API_KEY is set.
-                    </p>
-                  ) : obsLinkInfo?.gemini ? (
-                    <p className="text-sky-400/90">
-                      Google Gemini is enabled for AI lines. For a strong free default, add{' '}
-                      <code className="text-sky-300/90">GROQ_API_KEY</code> from console.groq.com
-                      (Groq is tried first).
-                    </p>
-                  ) : (
-                    <p className="text-gray-500">
-                      Add <code className="text-gray-400">GROQ_API_KEY</code> (free at groq.com) for AI
-                      alert lines, or <code className="text-gray-400">GOOGLE_GEMINI_API_KEY</code>.
-                      Otherwise fixed templates are used for speech.
-                    </p>
-                  )}
-                </div>
-                </div>
-              </div>
-            </div>
+            <DashboardCharts
+              series={stats.trends?.series ?? []}
+              payments={stats.payments}
+              formatKes={formatAmountForRole}
+              hideNumericAmounts={adminUser?.role === 'MODERATOR'}
+            />
           </div>
         )}
 
@@ -1878,7 +1479,12 @@ export default function AdminDashboard() {
                         </td>
                       </tr>
                     ) : (
-                      payments.map((payment) => (
+                      payments.map((payment) => {
+                        const sh = payment.streamShoutout
+                        const shoutPlat = sh?.platform ?? payment.streamAlertPlatform
+                        const shoutHandle = sh?.displayHandle ?? payment.streamAlertHandle
+                        const shoutMsg = sh?.message ?? payment.streamAlertMessage
+                        return (
                         <tr key={payment.id} className="hover:bg-gray-700/30 transition">
                           <td className="px-6 py-4">
                             <div className="font-medium text-white">{payment.user?.name || 'N/A'}</div>
@@ -1891,11 +1497,11 @@ export default function AdminDashboard() {
                             </td>
                           ) : (
                             <td className="px-6 py-4 text-gray-300 text-sm max-w-[220px]">
-                              <div className="text-cyan-300/90 font-medium">{shoutoutPlatformLabel(payment.streamAlertPlatform)}</div>
-                              <div className="text-white mt-0.5">@{payment.streamAlertHandle || payment.user?.tiktokUsername || '—'}</div>
-                              {payment.streamAlertMessage ? (
-                                <div className="text-gray-400 mt-1 line-clamp-2" title={payment.streamAlertMessage}>
-                                  {payment.streamAlertMessage}
+                              <div className="text-cyan-300/90 font-medium">{shoutoutPlatformLabel(shoutPlat)}</div>
+                              <div className="text-white mt-0.5">@{shoutHandle || payment.user?.tiktokUsername || '—'}</div>
+                              {shoutMsg ? (
+                                <div className="text-gray-400 mt-1 line-clamp-2" title={shoutMsg}>
+                                  {shoutMsg}
                                 </div>
                               ) : (
                                 <div className="text-gray-500 mt-1 italic">No message</div>
@@ -1923,7 +1529,8 @@ export default function AdminDashboard() {
                             )}
                           </td>
                         </tr>
-                      ))
+                        )
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1949,6 +1556,235 @@ export default function AdminDashboard() {
                     <button
                       onClick={() => setPaymentsPagination({...paymentsPagination, page: paymentsPagination.page + 1})}
                       disabled={paymentsPagination.page >= paymentsPagination.totalPages}
+                      className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Stream shoutouts table (`stream_shoutouts` in DB) */}
+        {activeTab === 'shoutouts' && (
+          <div className="space-y-6">
+            
+
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search handle, message, platform, payment id, payer..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+              </div>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              >
+                <option value="all">All payment status</option>
+                <option value="completed">Completed</option>
+                <option value="pending">Pending</option>
+                <option value="failed">Failed</option>
+              </select>
+              <button
+                type="button"
+                onClick={() =>
+                  exportToCSV(
+                    shoutouts.map((row) => ({
+                      id: row.id,
+                      displayHandle: row.displayHandle,
+                      platform: row.platform,
+                      message: row.message ?? '',
+                      videoUrl: row.videoUrl ?? '',
+                      amountKes: row.amountKes,
+                      paymentStatus: row.payment?.status,
+                      paymentId: row.paymentId,
+                      payerName: row.payment?.user?.name ?? '',
+                      payerPhone: row.payment?.user?.mpesaMobile ?? '',
+                      createdAt: row.createdAt,
+                    })),
+                    'stream-shoutouts',
+                  )
+                }
+                className="flex items-center gap-2 px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition"
+              >
+                <Download className="w-4 h-4" />
+                Export CSV
+              </button>
+              {isAdminOrSuper() && (
+                <button
+                  type="button"
+                  disabled={selectedShoutoutIds.size === 0}
+                  onClick={() => void handleDeleteSelectedShoutouts()}
+                  className="flex items-center gap-2 px-4 py-3 bg-red-600/90 hover:bg-red-600 text-white rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete selected ({selectedShoutoutIds.size})
+                </button>
+              )}
+            </div>
+
+            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 overflow-hidden">
+              <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
+                <table className="w-full min-w-[1000px]">
+                  <thead className="bg-gray-700/50">
+                    <tr>
+                      {isAdminOrSuper() && (
+                        <th className="w-12 px-3 py-3 sm:py-4 text-left">
+                          <input
+                            ref={shoutoutsSelectAllRef}
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-500 bg-gray-800 text-cyan-600 focus:ring-cyan-500"
+                            checked={
+                              shoutouts.length > 0 &&
+                              shoutouts.every((r) => selectedShoutoutIds.has(r.id))
+                            }
+                            onChange={(e) => toggleAllShoutoutsOnPage(e.target.checked)}
+                            title="Select all on this page"
+                            aria-label="Select all shoutouts on this page"
+                          />
+                        </th>
+                      )}
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        @Handle
+                      </th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        Platform
+                      </th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        Message
+                      </th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        Clip (TT / IG)
+                      </th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        Shoutout KES
+                      </th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        Payment
+                      </th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        Payer
+                      </th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        Created
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700/50">
+                    {shoutouts.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={isAdminOrSuper() ? 9 : 8}
+                          className="px-6 py-12 text-center text-gray-400"
+                        >
+                          No shoutout rows yet — run the Prisma migration so <code className="text-gray-300">stream_shoutouts</code>{' '}
+                          exists, then new shoutout checkouts will appear here.
+                        </td>
+                      </tr>
+                    ) : (
+                      shoutouts.map((row) => {
+                        const pay = row.payment
+                        return (
+                          <tr key={row.id} className="hover:bg-gray-700/30 transition">
+                            {isAdminOrSuper() && (
+                              <td className="w-12 px-3 py-3 sm:py-4 align-middle">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 rounded border-gray-500 bg-gray-800 text-cyan-600 focus:ring-cyan-500"
+                                  checked={selectedShoutoutIds.has(row.id)}
+                                  onChange={() => toggleShoutoutSelected(row.id)}
+                                  aria-label={`Select shoutout @${row.displayHandle}`}
+                                />
+                              </td>
+                            )}
+                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-white font-medium">@{row.displayHandle}</td>
+                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-cyan-300/90">{shoutoutPlatformLabel(row.platform)}</td>
+                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-gray-300 text-sm max-w-[200px]">
+                              {row.message ? (
+                                <span className="line-clamp-2" title={row.message}>
+                                  {row.message}
+                                </span>
+                              ) : (
+                                <span className="text-gray-500 italic">—</span>
+                              )}
+                            </td>
+                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm max-w-[160px]">
+                              {row.videoUrl ? (
+                                <a
+                                  href={row.videoUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-cyan-400 hover:text-cyan-300 underline break-all line-clamp-2"
+                                >
+                                  Open clip
+                                </a>
+                              ) : (
+                                <span className="text-gray-500 italic">—</span>
+                              )}
+                            </td>
+                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-gray-200 font-semibold">
+                              {formatAmountForRole(Number(row.amountKes ?? 0))}
+                            </td>
+                            <td className="px-3 sm:px-6 py-3 sm:py-4">
+                              <span
+                                className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold border ${getStatusBadge(pay?.status || '')}`}
+                              >
+                                {pay?.status ?? '—'}
+                              </span>
+                              <div className="text-xs text-gray-500 font-mono mt-1 max-w-[140px] truncate" title={pay?.id}>
+                                {pay?.transactionId || pay?.reference || pay?.id?.slice(0, 8) || '—'}
+                              </div>
+                            </td>
+                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm text-gray-300">
+                              <div>{pay?.user?.name || '—'}</div>
+                              <div className="text-gray-500">{pay?.user?.mpesaMobile || ''}</div>
+                            </td>
+                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-gray-400 text-sm">
+                              {row.createdAt ? formatDate(row.createdAt) : '—'}
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {shoutoutsPagination.totalPages > 1 && (
+                <div className="px-6 py-4 border-t border-gray-700/50 flex items-center justify-between">
+                  <div className="text-sm text-gray-400">
+                    Showing {((shoutoutsPagination.page - 1) * shoutoutsPagination.limit) + 1} to{' '}
+                    {Math.min(shoutoutsPagination.page * shoutoutsPagination.limit, shoutoutsPagination.total)} of{' '}
+                    {shoutoutsPagination.total} rows
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShoutoutsPagination({ ...shoutoutsPagination, page: shoutoutsPagination.page - 1 })
+                      }
+                      disabled={shoutoutsPagination.page === 1}
+                      className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="px-4 py-2 bg-gray-700 text-white rounded-lg">
+                      {shoutoutsPagination.page} / {shoutoutsPagination.totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShoutoutsPagination({ ...shoutoutsPagination, page: shoutoutsPagination.page + 1 })
+                      }
+                      disabled={shoutoutsPagination.page >= shoutoutsPagination.totalPages}
                       className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition"
                     >
                       <ChevronRight className="w-4 h-4" />
@@ -2013,6 +1849,166 @@ export default function AdminDashboard() {
                       Example: If set to 2.50 KES, a 3-month subscription will cost 7.50 KES (2.50 × 3)
                     </p>
                   </div>
+                </div>
+
+                <div className="border-t border-gray-700 pt-6">
+                  <h3 className="text-lg font-semibold text-white mb-2">Shoutout checkout (M-Pesa)</h3>
+                  <p className="text-xs text-gray-400 mb-4 max-w-2xl">
+                    Public shoutout form uses these limits. If the payer adds a TikTok clip URL, the higher
+                    minimum applies. Values are stored in platform settings and enforced on the server.
+                  </p>
+                  <div className="grid sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Min (no clip) <span className="text-gray-500 font-normal">KES</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={settingsForm.shoutoutMinKes ?? 10}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!Number.isNaN(v) && v >= 1) {
+                            setSettingsForm({ ...settingsForm, shoutoutMinKes: v })
+                          }
+                        }}
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Min (with clip) <span className="text-gray-500 font-normal">KES</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={settingsForm.shoutoutMinKesWithVideo ?? 50}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!Number.isNaN(v) && v >= 1) {
+                            setSettingsForm({ ...settingsForm, shoutoutMinKesWithVideo: v })
+                          }
+                        }}
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Max <span className="text-gray-500 font-normal">KES</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={settingsForm.shoutoutMaxKes ?? 500_000}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!Number.isNaN(v) && v >= 1) {
+                            setSettingsForm({ ...settingsForm, shoutoutMaxKes: v })
+                          }
+                        }}
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-3">
+                    Current: <span className="text-cyan-300/90">min {settings.shoutoutMinKes}</span> /{' '}
+                    <span className="text-cyan-300/90">with clip {settings.shoutoutMinKesWithVideo}</span> /{' '}
+                    <span className="text-cyan-300/90">max {settings.shoutoutMaxKes}</span>
+                  </p>
+                </div>
+
+                <div className="border-t border-gray-700 pt-6">
+                  <h3 className="text-lg font-semibold text-white mb-2">OBS alert display time</h3>
+                  <p className="text-xs text-gray-400 mb-4 max-w-2xl">
+                    How long each alert stays on screen in the OBS Browser Source before it hides. Reload the player URL
+                    after saving so the new timings apply (each page load reads settings from the server). Range: 3–600
+                    seconds.
+                  </p>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        New subscriber <span className="text-gray-500 font-normal">sec</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={3}
+                        max={600}
+                        step={1}
+                        value={settingsForm.obsAlertSecsNew ?? 12}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!Number.isNaN(v)) {
+                            setSettingsForm({ ...settingsForm, obsAlertSecsNew: v })
+                          }
+                        }}
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Renewal <span className="text-gray-500 font-normal">sec</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={3}
+                        max={600}
+                        step={1}
+                        value={settingsForm.obsAlertSecsRenewal ?? 12}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!Number.isNaN(v)) {
+                            setSettingsForm({ ...settingsForm, obsAlertSecsRenewal: v })
+                          }
+                        }}
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Shoutout (text only) <span className="text-gray-500 font-normal">sec</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={3}
+                        max={600}
+                        step={1}
+                        value={settingsForm.obsAlertSecsShoutout ?? 12}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!Number.isNaN(v)) {
+                            setSettingsForm({ ...settingsForm, obsAlertSecsShoutout: v })
+                          }
+                        }}
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">
+                        Shoutout (with clip) <span className="text-gray-500 font-normal">sec</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={3}
+                        max={600}
+                        step={1}
+                        value={settingsForm.obsAlertSecsShoutoutVideo ?? 45}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!Number.isNaN(v)) {
+                            setSettingsForm({ ...settingsForm, obsAlertSecsShoutoutVideo: v })
+                          }
+                        }}
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-3">
+                    Saved: new {settings.obsAlertSecsNew ?? 12}s · renewal {settings.obsAlertSecsRenewal ?? 12}s ·
+                    shoutout {settings.obsAlertSecsShoutout ?? 12}s · with clip {settings.obsAlertSecsShoutoutVideo ?? 45}s
+                  </p>
                 </div>
 
                 <div className="flex justify-end gap-3 pt-4 border-t border-gray-700">
