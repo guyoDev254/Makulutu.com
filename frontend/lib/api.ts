@@ -132,4 +132,32 @@ export const streamAlertApi = {
   },
 };
 
+export interface CoachingBookingCheckoutDto {
+  service: 'account_review' | 'both';
+  name: string;
+  contact: string;
+  mpesaMobile: string;
+  accountUsername: string;
+  availability?: string;
+  notes?: string;
+}
+
+export interface CoachingBookingCheckoutResponse {
+  payment: { id: string; amount: number; status: string; transactionRequestId?: string };
+  message: string;
+}
+
+export const coachingBookingApi = {
+  getPricing: async (): Promise<{ accountReviewKes: number }> => {
+    const response = await api.get('/coaching-bookings/pricing');
+    return response.data;
+  },
+  checkout: async (
+    data: CoachingBookingCheckoutDto,
+  ): Promise<CoachingBookingCheckoutResponse> => {
+    const response = await api.post('/coaching-bookings/checkout', data);
+    return response.data;
+  },
+};
+
 export default api;

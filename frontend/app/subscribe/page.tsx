@@ -18,6 +18,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { SiteNav } from '@/components/SiteNav'
+import { PlatformBrand } from '@/components/PlatformBrand'
 import Swal from 'sweetalert2'
 import {
   subscriptionApi,
@@ -456,13 +457,7 @@ export default function Subscribe() {
         <SiteNav />
 
         <main className="container mx-auto max-w-7xl px-4 pb-16 pt-4 sm:pt-6 md:pb-24">
-          <Link
-            href="/"
-            className="mb-8 inline-flex items-center gap-2 text-sm font-medium text-gray-400 transition hover:text-fuchsia-300"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-            Back to home
-          </Link>
+          
 
           <header className="mb-10 max-w-3xl">
             <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-violet-200/90">
@@ -915,8 +910,9 @@ export default function Subscribe() {
         </main>
 
         <footer className="relative z-10 border-t border-white/10 bg-black/20">
-          <div className="container mx-auto max-w-7xl px-4 py-8 pb-[max(2rem,env(safe-area-inset-bottom))] text-center text-sm text-gray-500">
-            © {new Date().getFullYear()} MohaGamer. All rights reserved.
+          <div className="container mx-auto max-w-7xl px-4 py-8 pb-[max(2rem,env(safe-area-inset-bottom))] flex flex-col items-center gap-4 text-center text-sm text-gray-500">
+            <PlatformBrand href="/" variant="footer" />
+            <p>© {new Date().getFullYear()} MohaGamer. All rights reserved.</p>
           </div>
         </footer>
       </div>

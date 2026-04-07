@@ -17,6 +17,7 @@ import {
   Youtube,
 } from 'lucide-react'
 import { SiteNav } from '@/components/SiteNav'
+import { PlatformBrand } from '@/components/PlatformBrand'
 
 const SOCIAL = {
   tiktok: 'https://www.tiktok.com/@mohagamer254',
@@ -86,7 +87,7 @@ export default function Home() {
               </h1>
               <p className="mt-5 max-w-xl text-base text-pretty text-gray-400 sm:text-lg md:text-xl">
                 Licensed FIFAe coach, official coach of Team Kenya (FIFAe), and admin for the
-                eFootball Kenya League—I stream eFootball, break down skills, offer{' '}
+                eFootball Kenya League. I stream eFootball, break down skills, offer{' '}
                 <span className="text-gray-300">account reviews &amp; rank push</span> sessions, and
                 hang with a community that loves the game. Subscribe for members-only access, join us
                 on <span className="text-gray-300">WhatsApp &amp; Discord</span>, or grab a shoutout
@@ -367,7 +368,7 @@ export default function Home() {
         <section className="container mx-auto max-w-6xl px-4 pb-16 sm:pb-20">
           <div className="mx-auto max-w-2xl text-center">
             <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400/90">
-              1:1 sessions
+              onStream sessions
             </p>
             <h2 className="mt-2 text-2xl font-bold text-balance sm:text-3xl md:text-4xl">
               Account review &amp; rank push
@@ -454,12 +455,11 @@ export default function Home() {
         <footer className="border-t border-white/10 bg-black/30">
           <div className="container mx-auto max-w-6xl px-4 py-10 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
             <div className="flex flex-col items-center justify-between gap-6 sm:flex-row">
-              <div className="text-center sm:text-left">
-                <p className="text-lg font-bold text-white">MohaGamer</p>
-                <p className="mt-1 text-sm text-gray-500">
-                  Licensed FIFAe coach · Team Kenya · eFootball Kenya League
-                </p>
-              </div>
+              <PlatformBrand
+                href="/"
+                variant="footer"
+                description="Licensed FIFAe coach · Team Kenya · eFootball Kenya League"
+              />
               <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-gray-400">
                 <Link href="/about" className="hover:text-white">
                   About

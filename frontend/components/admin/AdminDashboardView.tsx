@@ -31,6 +31,7 @@ import {
   Trash2,
   CalendarCheck,
   RotateCcw,
+  Wallet,
 } from 'lucide-react'
 import { DashboardCharts } from '@/components/admin/DashboardCharts'
 import { COACHING_SERVICE_LABELS } from '@/components/admin/constants'
@@ -93,6 +94,15 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
     setShowChangePasswordModal,
     setCreatingSubscription,
     saveCoachingBooking,
+    revenueData,
+    revenueLoading,
+    revenuePreset,
+    setRevenuePreset,
+    revenueFrom,
+    setRevenueFrom,
+    revenueTo,
+    setRevenueTo,
+    fetchRevenue,
     toggleShoutoutSelected,
     toggleAllShoutoutsOnPage,
     handleDeleteSelectedShoutouts,
@@ -183,6 +193,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
               { id: 'payments', label: 'Payments', icon: CreditCard },
               { id: 'shoutouts', label: 'Shoutouts', icon: Megaphone },
               { id: 'bookings', label: 'Bookings', icon: CalendarCheck },
+              { id: 'revenue', label: 'Revenue', icon: Wallet },
               ...(isAdminOrSuper() ? [{ id: 'settings', label: 'Settings', icon: SettingsIcon }] : []),
             ].map((tab) => {
               const Icon = tab.icon
@@ -1050,18 +1061,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
 
         {activeTab === 'bookings' && (
           <div className="space-y-6">
-            <div className="rounded-xl border border-gray-700/60 bg-gray-800/40 px-4 py-3 text-sm text-gray-300">
-              <span className="font-semibold text-white">
-                {coachingBookingsPagination.total}{' '}
-                {coachingBookingsPagination.total === 1 ? 'booking' : 'bookings'}
-              </span>{' '}
-              in the database (all pages). Each public <span className="text-gray-200">/book</span> submit calls{' '}
-              <code className="text-emerald-300/90 text-xs">POST /coaching-bookings</code>; the visitor sees a
-              success message (no WhatsApp or copy step). If this stays at 0 after testing, run{' '}
-              <code className="text-gray-200 text-xs">npx prisma migrate deploy</code> on the{' '}
-              <strong className="text-gray-100">same</strong> database the API uses, and confirm{' '}
-              <code className="text-gray-200 text-xs">NEXT_PUBLIC_API_URL</code> points at that API.
-            </div>
+            
             <div className="flex flex-col md:flex-row gap-4 md:items-center md:justify-between">
               <p className="text-sm text-gray-400 max-w-2xl">
                 Coaching requests from the public <span className="text-gray-300">/book</span> page. Status and
@@ -1096,6 +1096,9 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                         Name / contact
                       </th>
                       <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        Game account
+                      </th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
                         Availability
                       </th>
                       <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
@@ -1118,7 +1121,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                   <tbody className="divide-y divide-gray-700/50">
                     {coachingBookings.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="px-6 py-12 text-center text-gray-400">
+                        <td colSpan={9} className="px-6 py-12 text-center text-gray-400">
                           No coaching bookings yet — or the <code className="text-gray-300">coaching_bookings</code>{' '}
                           table is missing. Run the Prisma migration, then submit from the site book page.
                         </td>
@@ -1137,6 +1140,13 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                             <td className="px-3 sm:px-6 py-3 sm:py-4 text-sm">
                               <div className="text-white font-medium">{row.name}</div>
                               <div className="text-gray-400 mt-1 break-all">{row.contact}</div>
+                            </td>
+                            <td className="px-3 sm:px-6 py-3 sm:py-4 text-gray-300 text-sm max-w-[140px] break-all">
+                              {row.accountUsername ? (
+                                <span className="text-sky-200/90 font-medium">{row.accountUsername}</span>
+                              ) : (
+                                <span className="text-gray-500">—</span>
+                              )}
                             </td>
                             <td className="px-3 sm:px-6 py-3 sm:py-4 text-gray-300 text-sm max-w-[180px]">
                               {row.availability ? (
@@ -1263,6 +1273,200 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
           </div>
         )}
 
+        {activeTab === 'revenue' && (
+          <div className="space-y-6">
+            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 p-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                    <Wallet className="w-7 h-7 text-amber-400" />
+                    Revenue
+                  </h2>
+                  <p className="text-sm text-gray-400 mt-1 max-w-2xl">
+                    Completed M-Pesa payments only.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-wrap gap-2">
+                {(
+                  [
+                    ['today', 'Today'],
+                    ['yesterday', 'Yesterday'],
+                    ['last7', 'Last 7 days'],
+                    ['last30', 'Last 30 days'],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    disabled={revenueLoading}
+                    onClick={() => setRevenuePreset(id)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition disabled:opacity-50 ${
+                      revenuePreset === id
+                        ? 'bg-amber-600 text-white ring-2 ring-amber-400/50'
+                        : 'bg-gray-700 text-gray-200 hover:bg-gray-600'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  disabled={revenueLoading}
+                  onClick={() => {
+                    const ymd = new Intl.DateTimeFormat('en-CA', {
+                      timeZone: 'Africa/Nairobi',
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit',
+                    }).format(new Date())
+                    setRevenueFrom(ymd)
+                    setRevenueTo(ymd)
+                    setRevenuePreset('custom')
+                    void fetchRevenue({ preset: 'custom', from: ymd, to: ymd })
+                  }}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition disabled:opacity-50 ${
+                    revenuePreset === 'custom'
+                      ? 'bg-amber-600 text-white ring-2 ring-amber-400/50'
+                      : 'bg-gray-700 text-gray-200 hover:bg-gray-600'
+                  }`}
+                >
+                  Custom range
+                </button>
+              </div>
+
+              {revenuePreset === 'custom' && (
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">From</label>
+                    <input
+                      type="date"
+                      value={revenueFrom}
+                      onChange={(e) => setRevenueFrom(e.target.value)}
+                      className="px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">To</label>
+                    <input
+                      type="date"
+                      value={revenueTo}
+                      onChange={(e) => setRevenueTo(e.target.value)}
+                      className="px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={revenueLoading || !revenueFrom || !revenueTo}
+                    onClick={() =>
+                      void fetchRevenue({
+                        preset: 'custom',
+                        from: revenueFrom,
+                        to: revenueTo,
+                      })
+                    }
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+                  >
+                    Apply range
+                  </button>
+                </div>
+              )}
+
+              {revenueLoading && (
+                <div className="mt-6 flex items-center gap-2 text-gray-400">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Loading revenue…
+                </div>
+              )}
+
+              {!revenueLoading && revenueData && (
+                <>
+                  <div className="mt-6 text-xs text-gray-500">
+                    Range:{' '}
+                    <span className="text-gray-300">
+                      {revenueData.from} → {revenueData.to}
+                    </span>{' '}
+                    · {revenueData.totalCount} completed payment
+                    {revenueData.totalCount === 1 ? '' : 's'}
+                  </div>
+
+                  <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-200/80">
+                        Total
+                      </p>
+                      <p className="text-2xl font-bold text-white mt-1">
+                        {formatAmountForRole(revenueData.totalKes)}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">All sources</p>
+                    </div>
+                    {revenueData.sources.map((s) => (
+                      <div
+                        key={s.key}
+                        className="rounded-xl border border-gray-600/50 bg-gray-900/40 p-4"
+                      >
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                          {s.label}
+                        </p>
+                        <p className="text-xl font-bold text-white mt-1">
+                          {formatAmountForRole(s.kes)}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">{s.count} payment{s.count === 1 ? '' : 's'}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-8 overflow-x-auto rounded-xl border border-gray-700/50">
+                    <table className="w-full min-w-[640px] text-sm">
+                      <thead>
+                        <tr className="bg-gray-700/40 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">
+                          <th className="px-4 py-3">Date (Nairobi)</th>
+                          <th className="px-4 py-3 text-right">Subscriptions</th>
+                          <th className="px-4 py-3 text-right">Shoutouts</th>
+                          <th className="px-4 py-3 text-right">Account review</th>
+                          <th className="px-4 py-3 text-right">Other</th>
+                          <th className="px-4 py-3 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-700/40">
+                        {revenueData.daily.map((row) => (
+                          <tr key={row.date} className="hover:bg-gray-700/20">
+                            <td className="px-4 py-2.5 text-gray-200 whitespace-nowrap">{row.date}</td>
+                            <td className="px-4 py-2.5 text-right text-gray-300">
+                              {row.subscriptionKes > 0 ? formatAmountForRole(row.subscriptionKes) : '—'}
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-gray-300">
+                              {row.shoutoutKes > 0 ? formatAmountForRole(row.shoutoutKes) : '—'}
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-gray-300">
+                              {row.accountReviewKes > 0
+                                ? formatAmountForRole(row.accountReviewKes)
+                                : '—'}
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-gray-300">
+                              {row.otherKes > 0 ? formatAmountForRole(row.otherKes) : '—'}
+                            </td>
+                            <td className="px-4 py-2.5 text-right font-medium text-white">
+                              {row.totalKes > 0 ? formatAmountForRole(row.totalKes) : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {!revenueLoading && !revenueData && revenuePreset === 'custom' && (
+                <p className="mt-6 text-sm text-gray-500">
+                  Choose a start and end date, then click <strong className="text-gray-400">Apply range</strong>.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Settings Tab */}
         {activeTab === 'settings' && (
           <div className="space-y-6">
@@ -1384,6 +1588,38 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                     Current: <span className="text-cyan-300/90">min {settings.shoutoutMinKes}</span> /{' '}
                     <span className="text-cyan-300/90">with clip {settings.shoutoutMinKesWithVideo}</span> /{' '}
                     <span className="text-cyan-300/90">max {settings.shoutoutMaxKes}</span>
+                  </p>
+                </div>
+
+                <div className="border-t border-gray-700 pt-6">
+                  <h3 className="text-lg font-semibold text-white mb-2">Coaching — account review checkout</h3>
+                  <p className="text-xs text-gray-400 mb-4 max-w-2xl">
+                    M-Pesa amount for <strong className="text-gray-300">Account review</strong> and{' '}
+                    <strong className="text-gray-300">Both</strong> on the public book page. Rank push only stays free.
+                  </p>
+                  <div className="max-w-xs">
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Amount <span className="text-gray-500 font-normal">KES</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={settingsForm.coachingAccountReviewKes ?? 100}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10)
+                        if (!Number.isNaN(v) && v >= 1) {
+                          setSettingsForm({ ...settingsForm, coachingAccountReviewKes: v })
+                        }
+                      }}
+                      className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-3">
+                    Current:{' '}
+                    <span className="text-violet-300/90">
+                      KES {settings.coachingAccountReviewKes ?? 100} per booking
+                    </span>
                   </p>
                 </div>
 

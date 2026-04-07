@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import { Lock, User, Loader2, AlertCircle } from 'lucide-react'
 import Swal from 'sweetalert2'
 import api from '@/lib/api'
@@ -58,8 +59,17 @@ export default function LoginPage() {
         <div className="bg-gray-800/50 backdrop-blur-lg rounded-2xl shadow-2xl border border-gray-700/50 p-5 sm:p-8">
           {/* Header */}
           <div className="text-center mb-6 sm:mb-8">
-            <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full mb-3 sm:mb-4">
-              <Lock className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
+            <div className="flex justify-center mb-4 sm:mb-5">
+              <span className="inline-flex h-24 w-24 sm:h-28 sm:w-28 shrink-0 rounded-full bg-white p-1.5 shadow-xl shadow-black/50 ring-2 ring-white/45">
+                <Image
+                  src="/logo.png"
+                  alt="MohaGamer"
+                  width={256}
+                  height={256}
+                  className="h-full w-full rounded-full object-cover"
+                  priority
+                />
+              </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2">Admin Login</h1>
             <p className="text-gray-400">Enter your credentials to access the dashboard</p>

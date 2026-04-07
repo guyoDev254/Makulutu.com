@@ -16,6 +16,7 @@ import {
   Video,
 } from 'lucide-react'
 import { SiteNav } from '@/components/SiteNav'
+import { PlatformBrand } from '@/components/PlatformBrand'
 
 const SOCIAL = {
   tiktok: 'https://www.tiktok.com/@mohagamer254',
@@ -36,13 +37,6 @@ export default function About() {
         <SiteNav />
 
         <article className="container mx-auto max-w-6xl px-4 pb-20 pt-4 sm:pb-24 sm:pt-6 md:pb-28">
-          <Link
-            href="/"
-            className="mb-8 inline-flex items-center gap-2 text-sm font-medium text-gray-400 transition hover:text-fuchsia-300"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-            Back to home
-          </Link>
 
           {/* Hero */}
           <header className="mx-auto max-w-3xl text-center">
@@ -61,8 +55,8 @@ export default function About() {
             <p className="mt-4 text-lg text-gray-400 text-pretty sm:text-xl">
               Licensed <span className="text-gray-300">FIFAe</span> coach, official coach of Team
               Kenya (FIFAe), and part of the{' '}
-              <span className="text-gray-300">eFootball Kenya League</span> leadership—plus streams,
-              community, and 1:1{' '}
+              <span className="text-gray-300">eFootball Kenya League</span> leadership, plus streams,
+              community, and onStream{' '}
               <span className="text-gray-300">account reviews &amp; rank push</span> when you want
               direct help.
             </p>
@@ -129,7 +123,7 @@ export default function About() {
                   <div className="mt-5 space-y-4 text-base leading-relaxed text-gray-300 sm:text-lg">
                     <p>
                       Welcome to my corner of the internet. I&apos;m a passionate eFootball player
-                      and licensed FIFAe coach—I work with Team Kenya on the FIFAe side, help steer
+                      and licensed FIFAe coach, I work with Team Kenya on the FIFAe side, help steer
                       the eFootball Kenya League as an admin, and build spaces where competitive
                       players and casual fans can grow together. It started with football and gaming,
                       and grew into sharing matches, mistakes, and wins with people who get it.
@@ -140,7 +134,7 @@ export default function About() {
                       <strong className="font-semibold text-gray-200">
                         account reviews and rank-push coaching
                       </strong>{' '}
-                      if you want your squad and settings audited or a focused plan to climb—book a
+                      if you want your squad and settings audited or a focused plan to climb, book a
                       slot from the site and we&apos;ll confirm on WhatsApp.
                     </p>
                   </div>
@@ -168,7 +162,7 @@ export default function About() {
                   </li>
                   <li className="flex gap-3">
                     <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-fuchsia-400" />
-                    1:1 account reviews &amp; rank push (book online)
+                    onStream account reviews &amp; rank push (book online)
                   </li>
                 </ul>
               </div>
@@ -316,12 +310,11 @@ export default function About() {
         <footer className="border-t border-white/10 bg-black/30">
           <div className="container mx-auto max-w-6xl px-4 py-10 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
             <div className="flex flex-col items-center justify-between gap-6 sm:flex-row">
-              <div className="text-center sm:text-left">
-                <p className="text-lg font-bold text-white">MohaGamer</p>
-                <p className="mt-1 text-sm text-gray-500">
-                  Licensed FIFAe coach · Team Kenya · eFootball Kenya League
-                </p>
-              </div>
+              <PlatformBrand
+                href="/"
+                variant="footer"
+                description="Licensed FIFAe coach · Team Kenya · eFootball Kenya League"
+              />
               <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-gray-400">
                 <Link href="/" className="hover:text-white">
                   Home

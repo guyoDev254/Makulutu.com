@@ -29,7 +29,10 @@ export default function AdminObsAlertsPage() {
   const router = useRouter()
   const [adminUser, setAdminUser] = useState<any>(null)
   const [obsTestUsername, setObsTestUsername] = useState('TestCreator')
-  const [obsTestKind, setObsTestKind] = useState<'new' | 'renewal' | 'shoutout'>('new')
+  const [obsTestKind, setObsTestKind] = useState<
+    'new' | 'renewal' | 'shoutout' | 'account_review'
+  >('new')
+  const [obsTestCoachingAccount, setObsTestCoachingAccount] = useState('DemoGameAccount')
   const [obsTestAmountKes, setObsTestAmountKes] = useState('')
   const [obsTestVideoUrl, setObsTestVideoUrl] = useState('')
   const [obsTestMessage, setObsTestMessage] = useState('')
@@ -259,8 +262,14 @@ export default function AdminObsAlertsPage() {
         ...(amountOk && obsTestKind === 'shoutout'
           ? { shoutoutAmountKes: amountParsed }
           : {}),
-        ...(amountOk && obsTestKind !== 'shoutout'
+        ...(amountOk && obsTestKind === 'account_review'
+          ? { shoutoutAmountKes: amountParsed }
+          : {}),
+        ...(amountOk && (obsTestKind === 'new' || obsTestKind === 'renewal')
           ? { subscriptionAmountKes: amountParsed }
+          : {}),
+        ...(obsTestKind === 'account_review' && obsTestCoachingAccount.trim()
+          ? { coachingAccountUsername: obsTestCoachingAccount.trim().slice(0, 120) }
           : {}),
         ...(obsTestKind === 'shoutout' && obsTestVideoUrl.trim()
           ? {
@@ -284,11 +293,13 @@ export default function AdminObsAlertsPage() {
         return
       }
       const customNote = trimmedMessage ? ' Custom message included (AI skipped for that line).' : ''
+      const kindLabel =
+        obsTestKind === 'account_review' ? 'account review' : obsTestKind
       Swal.fire({
         icon: 'success',
         title: 'Alert sent',
         text: enabled
-          ? `OBS should show @${trimmed} (${obsTestKind}).${customNote} ${typeof sseListeners === 'number' ? `${sseListeners} listener(s) connected.` : ''}`.trim()
+          ? `OBS should show @${trimmed} (${kindLabel}).${customNote} ${typeof sseListeners === 'number' ? `${sseListeners} listener(s) connected.` : ''}`.trim()
           : `Event emitted (dev mode). In production, set OBS_ALERT_SECRET and use the player URL with the same token, or the Browser Source will not connect.`,
         timer: enabled ? 2800 : 4500,
         showConfirmButton: false,
@@ -578,13 +589,13 @@ export default function AdminObsAlertsPage() {
               </div>
               <div className="flex-1 min-w-[160px]">
                 <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                  TikTok username
+                  {obsTestKind === 'account_review' ? 'Booking display name' : 'TikTok username'}
                 </label>
                 <input
                   type="text"
                   value={obsTestUsername}
                   onChange={(e) => setObsTestUsername(e.target.value)}
-                  placeholder="TestCreator"
+                  placeholder={obsTestKind === 'account_review' ? 'Customer name' : 'TestCreator'}
                   className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
                 />
               </div>
@@ -593,18 +604,25 @@ export default function AdminObsAlertsPage() {
                 <select
                   value={obsTestKind}
                   onChange={(e) =>
-                    setObsTestKind(e.target.value as 'new' | 'renewal' | 'shoutout')
+                    setObsTestKind(
+                      e.target.value as 'new' | 'renewal' | 'shoutout' | 'account_review',
+                    )
                   }
                   className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
                 >
                   <option value="new">New subscriber</option>
                   <option value="renewal">Resubscribed</option>
                   <option value="shoutout">Shoutout</option>
+                  <option value="account_review">Account review</option>
                 </select>
               </div>
               <div className="min-w-[100px]">
                 <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                  {obsTestKind === 'shoutout' ? 'Shoutout KES' : 'Subscription KES'}
+                  {obsTestKind === 'shoutout'
+                    ? 'Shoutout KES'
+                    : obsTestKind === 'account_review'
+                      ? 'Review KES'
+                      : 'Subscription KES'}
                   <span className="text-gray-600 font-normal"> (opt.)</span>
                 </label>
                 <input
@@ -622,7 +640,7 @@ export default function AdminObsAlertsPage() {
                   type="checkbox"
                   checked={obsTestSkipGemini}
                   onChange={(e) => setObsTestSkipGemini(e.target.checked)}
-                  disabled={obsTestKind === 'shoutout'}
+                  disabled={obsTestKind === 'shoutout' || obsTestKind === 'account_review'}
                   className="rounded border-gray-600 bg-gray-900 text-fuchsia-600 focus:ring-fuchsia-500 disabled:opacity-40"
                 />
                 Skip AI line
@@ -650,13 +668,35 @@ export default function AdminObsAlertsPage() {
                 onChange={(e) => setObsTestMessage(e.target.value)}
                 rows={2}
                 maxLength={500}
-                placeholder="Same as public subscribe: short line for OBS / TTS (skips AI when set)"
+                placeholder={
+                  obsTestKind === 'account_review'
+                    ? 'Optional booking notes (same as live checkout)'
+                    : 'Same as public subscribe: short line for OBS / TTS (skips AI when set)'
+                }
                 className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm resize-y min-h-[4.5rem]"
               />
               <p className="text-xs text-gray-500 mt-1">
                 Max 500 characters. Leave empty to use the normal template or AI line.
               </p>
             </div>
+            {obsTestKind === 'account_review' && (
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                  Game / account username <span className="text-gray-600 font-normal">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={obsTestCoachingAccount}
+                  onChange={(e) => setObsTestCoachingAccount(e.target.value)}
+                  placeholder="eFootball / in-game name"
+                  maxLength={120}
+                  className="w-full px-3 py-2 bg-gray-900/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Shown on the account-review overlay like a real paid booking.
+                </p>
+              </div>
+            )}
             {obsTestKind === 'shoutout' && (
               <div>
                 <label className="block text-xs font-medium text-gray-400 mb-1.5">

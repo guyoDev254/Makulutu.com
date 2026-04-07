@@ -43,4 +43,34 @@ export type AdminTabId =
   | 'payments'
   | 'shoutouts'
   | 'bookings'
+  | 'revenue'
   | 'settings'
+
+export interface RevenueSourceRow {
+  key: string
+  label: string
+  kes: number
+  count: number
+}
+
+export interface RevenueDailyRow {
+  date: string
+  subscriptionKes: number
+  shoutoutKes: number
+  accountReviewKes: number
+  otherKes: number
+  totalKes: number
+}
+
+export interface RevenueBreakdownResponse {
+  preset: string
+  timezone: string
+  from: string
+  to: string
+  rangeStartUtc: string
+  rangeEndUtc: string
+  totalKes: number
+  totalCount: number
+  sources: RevenueSourceRow[]
+  daily: RevenueDailyRow[]
+}

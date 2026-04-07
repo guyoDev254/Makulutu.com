@@ -6,7 +6,14 @@ import Swal from 'sweetalert2'
 import api, { apiNetworkErrorHint, isAxiosNetworkError } from '@/lib/api'
 import { formatApiErrorMessage } from '@/lib/api-origin'
 import { isAuthenticated, getAdminUser, clearAuth } from '@/lib/auth'
-import type { DashboardStats, PaginationInfo, AdminTabId } from '@/components/admin/types'
+import type {
+  DashboardStats,
+  PaginationInfo,
+  AdminTabId,
+  RevenueBreakdownResponse,
+} from '@/components/admin/types'
+
+export type RevenuePresetId = 'today' | 'yesterday' | 'last7' | 'last30' | 'custom'
 import { exportToCSV } from '@/components/admin/exportCsv'
 import { formatCurrency, formatAmountForRole as formatKesForRole, formatDate, shoutoutPlatformLabel, getStatusBadge } from '@/components/admin/format'
 
@@ -25,6 +32,7 @@ export function useAdminDashboard() {
     shoutoutMinKes: 10,
     shoutoutMinKesWithVideo: 50,
     shoutoutMaxKes: 500_000,
+    coachingAccountReviewKes: 100,
     obsAlertSecsNew: 12,
     obsAlertSecsRenewal: 12,
     obsAlertSecsShoutout: 12,
@@ -35,6 +43,7 @@ export function useAdminDashboard() {
     shoutoutMinKes: 10,
     shoutoutMinKesWithVideo: 50,
     shoutoutMaxKes: 500_000,
+    coachingAccountReviewKes: 100,
     obsAlertSecsNew: 12,
     obsAlertSecsRenewal: 12,
     obsAlertSecsShoutout: 12,
@@ -59,6 +68,11 @@ export function useAdminDashboard() {
     Record<string, { status: string; adminNotes: string }>
   >({})
   const [savingBookingId, setSavingBookingId] = useState<string | null>(null)
+  const [revenueData, setRevenueData] = useState<RevenueBreakdownResponse | null>(null)
+  const [revenueLoading, setRevenueLoading] = useState(false)
+  const [revenuePreset, setRevenuePreset] = useState<RevenuePresetId>('today')
+  const [revenueFrom, setRevenueFrom] = useState('')
+  const [revenueTo, setRevenueTo] = useState('')
   const [selectedShoutoutIds, setSelectedShoutoutIds] = useState<Set<string>>(() => new Set())
   const [replayingShoutoutId, setReplayingShoutoutId] = useState<string | null>(null)
   const shoutoutsSelectAllRef = useRef<HTMLInputElement>(null)
@@ -128,6 +142,7 @@ export function useAdminDashboard() {
     } else if (activeTab === 'settings') {
       fetchSettings()
     }
+    // revenue: loaded via fetchRevenue in its own effect
   }, [
     activeTab,
     debouncedSearch,
@@ -279,6 +294,49 @@ export function useAdminDashboard() {
     }
   }
 
+  const fetchRevenue = async (opts?: {
+    preset?: RevenuePresetId
+    from?: string
+    to?: string
+  }) => {
+    const preset = opts?.preset ?? revenuePreset
+    const from = (opts?.from ?? revenueFrom).trim()
+    const to = (opts?.to ?? revenueTo).trim()
+    if (preset === 'custom' && (!from || !to)) {
+      return
+    }
+    setRevenueLoading(true)
+    try {
+      const params = new URLSearchParams({ preset })
+      if (preset === 'custom') {
+        params.set('from', from)
+        params.set('to', to)
+      }
+      const res = await api.get<RevenueBreakdownResponse>(`/admin/revenue?${params}`)
+      setRevenueData(res.data)
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: unknown } }
+      console.error('Error fetching revenue:', error)
+      Swal.fire({
+        icon: 'error',
+        title: 'Revenue failed',
+        text: isAxiosNetworkError(error)
+          ? apiNetworkErrorHint()
+          : formatApiErrorMessage(err.response?.data, 'Could not load revenue breakdown.'),
+        confirmButtonColor: '#dc2626',
+      })
+    } finally {
+      setRevenueLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'revenue') return
+    if (revenuePreset === 'custom') return
+    void fetchRevenue({ preset: revenuePreset })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: custom range uses Apply only
+  }, [activeTab, revenuePreset])
+
   useEffect(() => {
     if (activeTab !== 'bookings') return
     const next: Record<string, { status: string; adminNotes: string }> = {}
@@ -416,6 +474,7 @@ export function useAdminDashboard() {
     if (activeTab === 'payments') await fetchPayments()
     if (activeTab === 'shoutouts') await fetchStreamShoutouts()
     if (activeTab === 'bookings') await fetchCoachingBookings()
+    if (activeTab === 'revenue') await fetchRevenue()
     if (activeTab === 'settings') await fetchSettings()
     setRefreshing(false)
     Swal.fire({
@@ -742,6 +801,7 @@ export function useAdminDashboard() {
       shoutoutMinKes: 10,
       shoutoutMinKesWithVideo: 50,
       shoutoutMaxKes: 500_000,
+      coachingAccountReviewKes: 100,
       obsAlertSecsNew: 12,
       obsAlertSecsRenewal: 12,
       obsAlertSecsShoutout: 12,
@@ -801,6 +861,17 @@ export function useAdminDashboard() {
           icon: 'error',
           title: 'Invalid',
           text: 'Maximum must be ≥ minimum with clip.',
+          confirmButtonColor: '#dc2626',
+        })
+        return
+      }
+
+      const coachKes = Number(settingsForm.coachingAccountReviewKes)
+      if (!Number.isFinite(coachKes) || coachKes < 1 || coachKes > 10_000_000) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Invalid',
+          text: 'Account review checkout must be between 1 and 10,000,000 KES.',
           confirmButtonColor: '#dc2626',
         })
         return
@@ -917,6 +988,15 @@ export function useAdminDashboard() {
     fetchCoachingBookings,
     fetchSettings,
     saveCoachingBooking,
+    revenueData,
+    revenueLoading,
+    revenuePreset,
+    setRevenuePreset,
+    revenueFrom,
+    setRevenueFrom,
+    revenueTo,
+    setRevenueTo,
+    fetchRevenue,
     toggleShoutoutSelected,
     toggleAllShoutoutsOnPage,
     handleDeleteSelectedShoutouts,

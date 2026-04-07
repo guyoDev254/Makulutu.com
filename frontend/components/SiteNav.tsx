@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { Menu, X } from 'lucide-react'
+import { PlatformBrand } from '@/components/PlatformBrand'
 
 const links = [
   { href: '/', label: 'Home' },
@@ -14,15 +15,14 @@ export function SiteNav() {
   const [open, setOpen] = useState(false)
 
   return (
-    <nav className="container mx-auto max-w-7xl px-4 py-4 sm:py-6 relative z-30">
+    <nav className="container mx-auto max-w-7xl px-4 py-5 sm:py-6 relative z-30">
       <div className="flex justify-between items-center gap-4">
-        <Link
+        <PlatformBrand
           href="/"
-          className="text-xl sm:text-2xl font-bold text-white shrink-0 min-w-0 truncate"
+          variant="nav"
+          priority
           onClick={() => setOpen(false)}
-        >
-          MohaGamer
-        </Link>
+        />
         <button
           type="button"
           className="md:hidden p-2.5 rounded-lg text-white hover:bg-white/10 border border-white/10"

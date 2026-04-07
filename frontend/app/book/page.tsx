@@ -1,11 +1,13 @@
 'use client'
 
+import axios from 'axios'
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import Swal from 'sweetalert2'
-import { ArrowLeft, CalendarCheck, ClipboardList, Loader2, TrendingUp } from 'lucide-react'
+import { ArrowLeft, CalendarCheck, ClipboardList, Loader2, Phone, TrendingUp } from 'lucide-react'
 import { SiteNav } from '@/components/SiteNav'
 import {
   API_BASE_URL,
@@ -13,18 +15,101 @@ import {
   formatApiErrorMessage,
   isFetchNetworkError,
 } from '@/lib/api-origin'
+import { coachingBookingApi, subscriptionApi } from '@/lib/api'
 
-const bookingSchema = z.object({
-  service: z.enum(['account_review', 'rank_push', 'both']),
-  name: z.string().min(2, 'Enter your name').max(80),
-  contact: z.string().min(3, 'How should we reach you?').max(120),
-  availability: z.string().max(500).optional(),
-  notes: z.string().max(2000).optional(),
-})
+const bookingSchema = z
+  .object({
+    service: z.enum(['account_review', 'rank_push', 'both']),
+    name: z.string().min(2, 'Enter your name').max(80),
+    contact: z.string().min(3, 'How should we reach you?').max(120),
+    mpesaMobile: z.string().optional(),
+    accountUsername: z.string().max(120).optional(),
+    availability: z.string().max(500).optional(),
+    notes: z.string().max(2000).optional(),
+  })
+  .superRefine((data, ctx) => {
+    const paid = data.service === 'account_review' || data.service === 'both'
+    if (!paid) return
+    const phone = (data.mpesaMobile || '').replace(/\s/g, '')
+    if (!/^(254|0)[0-9]{9}$/.test(phone)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Enter a valid M-Pesa number (254XXXXXXXXX or 0XXXXXXXXX)',
+        path: ['mpesaMobile'],
+      })
+    }
+    const acct = (data.accountUsername || '').trim()
+    if (acct.length < 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Enter the game account username to review',
+        path: ['accountUsername'],
+      })
+    }
+  })
 
 type BookingForm = z.infer<typeof bookingSchema>
 
+function pollBookingPaymentStatus(paymentId: string, accountUsername: string) {
+  const maxAttempts = 30
+  let attempts = 0
+
+  const interval = setInterval(async () => {
+    attempts += 1
+    try {
+      const payment = await subscriptionApi.checkPaymentStatus(paymentId)
+      const status = payment.status?.toLowerCase() || payment.status
+
+      if (status === 'completed' || status === 'COMPLETED') {
+        clearInterval(interval)
+        const safeAcct = accountUsername.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        await Swal.fire({
+          icon: 'success',
+          title: 'Booking confirmed',
+          html: `<p class="text-sm">Payment received. MohaGamer will contact you using the details you provided.</p><p class="text-sm text-gray-600 mt-3">Game account for review: <strong>${safeAcct}</strong></p>`,
+          confirmButtonColor: '#7c3aed',
+        })
+      } else if (status === 'failed' || status === 'FAILED') {
+        clearInterval(interval)
+        await Swal.fire({
+          icon: 'error',
+          title: 'Payment failed',
+          text: 'Payment was cancelled or failed. Your booking was not confirmed.',
+          confirmButtonColor: '#dc2626',
+        })
+      } else if (attempts >= maxAttempts) {
+        clearInterval(interval)
+        await Swal.fire({
+          icon: 'warning',
+          title: 'Payment still pending',
+          text: 'If you completed M-Pesa, we will still process your booking. Otherwise try again.',
+          confirmButtonColor: '#f59e0b',
+        })
+      }
+    } catch {
+      if (attempts >= maxAttempts) clearInterval(interval)
+    }
+  }, 10_000)
+}
+
 export default function BookPage() {
+  const [accountReviewKes, setAccountReviewKes] = useState(100)
+
+  useEffect(() => {
+    let cancelled = false
+    void coachingBookingApi
+      .getPricing()
+      .then((r) => {
+        if (cancelled) return
+        const n = Number(r.accountReviewKes)
+        if (Number.isFinite(n) && n >= 1) setAccountReviewKes(Math.round(n))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const {
     register,
     handleSubmit,
@@ -37,12 +122,71 @@ export default function BookPage() {
       service: 'account_review',
       availability: '',
       notes: '',
+      mpesaMobile: '',
+      accountUsername: '',
     },
   })
 
   const service = watch('service')
+  const needsPay = service === 'account_review' || service === 'both'
 
   const onSubmit = async (data: BookingForm) => {
+    const paid = data.service === 'account_review' || data.service === 'both'
+
+    if (paid) {
+      const mpesa = data.mpesaMobile!.replace(/\s/g, '')
+      const acct = data.accountUsername!.trim()
+      try {
+        const res = await coachingBookingApi.checkout({
+          service: data.service === 'both' ? 'both' : 'account_review',
+          name: data.name.trim(),
+          contact: data.contact.trim(),
+          mpesaMobile: mpesa,
+          accountUsername: acct,
+          ...(data.availability?.trim()
+            ? { availability: data.availability.trim() }
+            : {}),
+          ...(data.notes?.trim() ? { notes: data.notes.trim() } : {}),
+        })
+        const stkKes =
+          res.payment?.amount != null ? Number(res.payment.amount) : accountReviewKes
+        const kesLabel = Number.isFinite(stkKes) ? Math.round(stkKes) : accountReviewKes
+        await Swal.fire({
+          icon: 'info',
+          title: 'M-Pesa prompt sent',
+          html: `<p class="text-sm">Complete the <strong>KES ${kesLabel}</strong> payment on your phone to confirm your booking.</p>`,
+          confirmButtonColor: '#7c3aed',
+          timer: 6000,
+          timerProgressBar: true,
+        })
+        pollBookingPaymentStatus(res.payment.id, acct)
+        reset({
+          service: 'account_review',
+          name: '',
+          contact: '',
+          availability: '',
+          notes: '',
+          mpesaMobile: '',
+          accountUsername: '',
+        })
+      } catch (err: unknown) {
+        const text = isFetchNetworkError(err)
+          ? apiNetworkErrorHint()
+          : axios.isAxiosError(err)
+            ? formatApiErrorMessage(err.response?.data)
+            : err instanceof Error
+              ? err.message
+              : 'Please try again in a moment.'
+        await Swal.fire({
+          icon: 'error',
+          title: 'Could not start payment',
+          text,
+          confirmButtonColor: '#7c3aed',
+        })
+      }
+      return
+    }
+
     const payload = {
       service: data.service,
       name: data.name.trim(),
@@ -88,6 +232,8 @@ export default function BookPage() {
       contact: '',
       availability: '',
       notes: '',
+      mpesaMobile: '',
+      accountUsername: '',
     })
   }
 
@@ -102,13 +248,7 @@ export default function BookPage() {
         <SiteNav />
 
         <main className="container mx-auto max-w-3xl px-4 pb-20 pt-4 sm:pt-6">
-          <Link
-            href="/"
-            className="mb-8 inline-flex items-center gap-2 text-sm font-medium text-gray-400 transition hover:text-fuchsia-300"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-            Back to home
-          </Link>
+          
 
           <header className="mb-10 text-center sm:text-left">
             <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-200/90">
@@ -119,7 +259,7 @@ export default function BookPage() {
               Account review &amp; rank push
             </h1>
             <p className="mt-4 text-gray-400 text-pretty sm:text-lg">
-              1:1 help for your eFootball account. Submit your details below and MohaGamer will reach
+              onStream help for your eFootball account. Submit your details below and MohaGamer will reach
               out to you right away.
             </p>
           </header>
@@ -131,8 +271,11 @@ export default function BookPage() {
               </div>
               <h2 className="mt-3 font-semibold text-white">Account review</h2>
               <p className="mt-2 text-sm leading-relaxed text-gray-400">
-                Squad, tactics, and settings looked over with clear fixes—so you know what to
-                change and why.
+                Squad, tactics, and settings looked over with clear fixes—so you know what to change
+                and why.
+              </p>
+              <p className="mt-3 text-sm font-medium text-emerald-300/95">
+                KES {accountReviewKes} via M-Pesa when you book (account review or both).
               </p>
             </div>
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
@@ -144,6 +287,7 @@ export default function BookPage() {
                 Focused plan to climb divisions—playstyle tweaks, matchups, and consistency on the
                 ladder.
               </p>
+              <p className="mt-3 text-sm text-gray-500">No payment on this form for rank push only.</p>
             </div>
           </div>
 
@@ -184,6 +328,13 @@ export default function BookPage() {
               )}
             </fieldset>
 
+            {needsPay && (
+              <p className="mt-5 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/95">
+                Account review and &quot;Both&quot; require a one-time{' '}
+                <strong>KES {accountReviewKes}</strong> M-Pesa payment to confirm your booking.
+              </p>
+            )}
+
             <div className="mt-6 space-y-5">
               <div>
                 <label htmlFor="book-name" className="block text-sm font-medium text-gray-300">
@@ -218,6 +369,55 @@ export default function BookPage() {
                   <p className="mt-1.5 text-sm text-red-400">{errors.contact.message}</p>
                 )}
               </div>
+
+              {needsPay && (
+                <>
+                  <div>
+                    <label
+                      htmlFor="book-account-username"
+                      className="block text-sm font-medium text-gray-300"
+                    >
+                      Game account username{' '}
+                      <span className="text-emerald-400/90">(account to review)</span>
+                    </label>
+                    <input
+                      id="book-account-username"
+                      type="text"
+                      autoComplete="username"
+                      className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/40"
+                      placeholder="Your in-game / Konami ID or account name"
+                      {...register('accountUsername')}
+                    />
+                    {errors.accountUsername && (
+                      <p className="mt-1.5 text-sm text-red-400">
+                        {errors.accountUsername.message}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="book-mpesa"
+                      className="flex items-center gap-2 text-sm font-medium text-gray-300"
+                    >
+                      <Phone className="h-4 w-4 text-gray-400" aria-hidden />
+                      M-Pesa number (for KES {accountReviewKes})
+                    </label>
+                    <input
+                      id="book-mpesa"
+                      type="tel"
+                      inputMode="numeric"
+                      autoComplete="tel"
+                      className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/40"
+                      placeholder="254712345678 or 0712345678"
+                      {...register('mpesaMobile')}
+                    />
+                    {errors.mpesaMobile && (
+                      <p className="mt-1.5 text-sm text-red-400">{errors.mpesaMobile.message}</p>
+                    )}
+                  </div>
+                </>
+              )}
 
               <div>
                 <label
@@ -257,8 +457,9 @@ export default function BookPage() {
             </div>
 
             <p className="mt-6 text-xs text-gray-500">
-              Your request is saved securely. No links to copy—MohaGamer will contact you using the
-              contact information you enter above.
+              {needsPay
+                ? 'After M-Pesa succeeds, your booking is saved and MohaGamer is notified on stream.'
+                : 'Your request is saved securely. MohaGamer will contact you using the contact information you enter above.'}
             </p>
 
             <button
@@ -269,8 +470,10 @@ export default function BookPage() {
               {isSubmitting ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-                  Sending…
+                  {needsPay ? 'Starting payment…' : 'Sending…'}
                 </>
+              ) : needsPay ? (
+                `Pay KES ${accountReviewKes} & book`
               ) : (
                 'Submit request'
               )}
