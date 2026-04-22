@@ -12,7 +12,7 @@ The package `openssl1.1-compat` doesn't exist in Alpine Linux. Updated to use:
 cd backend
 
 # Rebuild for AMD64
-docker build --platform linux/amd64 -t guyoDev254/mohagamer-backend:latest -f Dockerfile .
+docker build --platform linux/amd64 -t guyoDev254/makulutu-backend:latest -f Dockerfile .
 ```
 
 ## 📋 What Changed

@@ -4,7 +4,7 @@
 
 set -e
 
-IMAGE_NAME=${1:-mohagamer-backend}
+IMAGE_NAME=${1:-makulutu-backend}
 TAG=${2:-latest}
 
 echo "🐳 Building Docker image for AMD64 (linux/amd64)..."

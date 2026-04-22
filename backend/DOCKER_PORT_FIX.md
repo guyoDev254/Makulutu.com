@@ -21,7 +21,7 @@ The docker-compose files have been updated to use port **5433** by default inste
 POSTGRES_PORT=5433
 
 # Update DATABASE_URL to match
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/makulutu
 ```
 
 **Note:** Inside Docker containers, PostgreSQL still uses port 5432. Only the host port mapping changed to 5433.
@@ -55,12 +55,12 @@ If you want to use your existing PostgreSQL instead of Docker's:
 
 2. **Update DATABASE_URL in .env:**
    ```env
-   DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/mohagamer
+   DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/makulutu
    ```
 
 3. **Or connect to localhost:**
    ```env
-   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/mohagamer
+   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/makulutu
    ```
 
 ## 🚀 Quick Fix
@@ -86,10 +86,10 @@ lsof -i :5433
 **Test connection:**
 ```bash
 # From host (using port 5433)
-psql -h localhost -p 5433 -U postgres -d mohagamer
+psql -h localhost -p 5433 -U postgres -d makulutu
 
 # From Docker container (using port 5432)
-docker-compose exec backend psql -h postgres -p 5432 -U postgres -d mohagamer
+docker-compose exec backend psql -h postgres -p 5432 -U postgres -d makulutu
 ```
 
 ---

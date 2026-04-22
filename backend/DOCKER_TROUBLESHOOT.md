@@ -42,7 +42,7 @@ docker-compose up backend -d
 
 **Fix:** Create/update `.env` file:
 ```env
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/makulutu
 JWT_SECRET=your-secret-key-change-in-production
 JWT_EXPIRES_IN=7d
 FRONTEND_URL=http://localhost:3000
@@ -86,7 +86,7 @@ lsof -i :5433
 ### Check Container Status
 ```bash
 docker-compose ps
-docker ps -a | grep mohagamer
+docker ps -a | grep makulutu
 ```
 
 ### View Container Logs
@@ -107,13 +107,13 @@ docker-compose logs
 docker-compose exec backend sh
 
 # Or if container keeps restarting
-docker run -it --rm --entrypoint sh guyoDev254/mohagamer-backend:latest
+docker run -it --rm --entrypoint sh guyoDev254/makulutu-backend:latest
 ```
 
 ### Check Database Connection
 ```bash
 # From host
-psql -h localhost -p 5433 -U postgres -d mohagamer
+psql -h localhost -p 5433 -U postgres -d makulutu
 
 # From backend container
 docker-compose exec backend yarn prisma db push

@@ -5,8 +5,13 @@ function resolveApiBaseUrl(): string {
   const raw =
     (process.env.NEXT_PUBLIC_API_URL || '').trim() ||
     (process.env.NODE_ENV === 'production'
-      ? 'https://mohagamer.northernbox.org'
+      ? ''
       : 'http://localhost:2000');
+  if (!raw && process.env.NODE_ENV === 'production') {
+    console.warn(
+      '[api-origin] NEXT_PUBLIC_API_URL is not set; API calls may fail until you configure it.',
+    );
+  }
   return raw.replace(/\/+$/, '');
 }
 
@@ -21,10 +26,19 @@ export function formatApiErrorMessage(
   const m = (body as { message?: unknown }).message;
   if (typeof m === 'string' && m.trim()) return m;
   if (Array.isArray(m) && m.length) return m.map(String).join(' ');
+  const details = (body as { details?: { message?: unknown } }).details;
+  if (details && typeof details === 'object' && details !== null) {
+    const dm = details.message;
+    if (typeof dm === 'string' && dm.trim()) return dm;
+    if (Array.isArray(dm) && dm.length) return dm.map(String).join(' ');
+  }
   return fallback;
 }
 
 export function apiNetworkErrorHint(): string {
+  if (!API_BASE_URL) {
+    return 'NEXT_PUBLIC_API_URL is not set. Add it to frontend/.env (see .env.production for production).';
+  }
   const local =
     API_BASE_URL.includes('localhost') || API_BASE_URL.includes('127.0.0.1');
   if (local) {

@@ -54,6 +54,9 @@ export interface RegisterSubscriptionDto {
   whatsappNumber: string;
   months: number;
   monthlyPrice?: number;
+  creatorSlug?: string;
+  /** `mpesa` (default): STK push. `paypal`: redirect to PayPal checkout. */
+  paymentMethod?: 'mpesa' | 'paypal';
 }
 
 export interface PaymentResponse {
@@ -72,8 +75,58 @@ export interface PaymentResponse {
   message: string;
 }
 
+export type RegisterSubscriptionResponse = PaymentResponse & {
+  approvalUrl?: string;
+};
+
+export type StreamAlertLimits = {
+  minKes: number;
+  minKesWithVideo: number;
+  maxKes: number;
+};
+
+export type SupportCatalogMembershipItem = {
+  kind: 'membership';
+  id: 'membership';
+  title: string;
+  description: string | null;
+  monthlyPriceKes: number;
+};
+
+export type SupportCatalogShoutoutItem = {
+  kind: 'shoutout';
+  id: 'shoutout';
+  title: string;
+  description: string | null;
+  limits: StreamAlertLimits;
+};
+
+export type SupportCatalogRewardItem = {
+  kind: 'reward';
+  id: string;
+  name: string;
+  description: string | null;
+  amountKes: number;
+  alertBannerLabel: string;
+  allowSupporterMessage: boolean;
+  allowVideoClip: boolean;
+  maxMessageLength: number;
+  accentColor: string | null;
+};
+
+export type SupportCatalogItem =
+  | SupportCatalogMembershipItem
+  | SupportCatalogShoutoutItem
+  | SupportCatalogRewardItem;
+
+export interface SupportCatalogResponse {
+  items: SupportCatalogItem[];
+}
+
 export const subscriptionApi = {
-  register: async (data: RegisterSubscriptionDto): Promise<PaymentResponse> => {
+  register: async (
+    data: RegisterSubscriptionDto,
+  ): Promise<RegisterSubscriptionResponse> => {
     const response = await api.post('/subscriptions/register', data);
     return response.data;
   },
@@ -83,8 +136,22 @@ export const subscriptionApi = {
     return response.data;
   },
 
-  getMonthlyPrice: async () => {
-    const response = await api.get('/subscriptions/price');
+  getMonthlyPrice: async (creatorSlug?: string) => {
+    const qs = creatorSlug
+      ? `?creatorSlug=${encodeURIComponent(creatorSlug)}`
+      : '';
+    const response = await api.get(`/subscriptions/price${qs}`);
+    return response.data;
+  },
+
+  /** Membership, live shoutout, and custom reward tiers in admin-configured order. */
+  getSupportCatalog: async (creatorSlug?: string) => {
+    const qs = creatorSlug
+      ? `?creatorSlug=${encodeURIComponent(creatorSlug)}`
+      : '';
+    const response = await api.get<SupportCatalogResponse>(
+      `/subscriptions/support-catalog${qs}`,
+    );
     return response.data;
   },
 };
@@ -106,6 +173,7 @@ export interface StreamAlertCheckoutDto {
   message?: string;
   /** Optional TikTok clip URL (https); server validates embed. */
   videoUrl?: string;
+  creatorSlug?: string;
 }
 
 export interface StreamAlertCheckoutResponse {
@@ -113,15 +181,12 @@ export interface StreamAlertCheckoutResponse {
   message: string;
 }
 
-export type StreamAlertLimits = {
-  minKes: number;
-  minKesWithVideo: number;
-  maxKes: number;
-};
-
 export const streamAlertApi = {
-  getLimits: async (): Promise<StreamAlertLimits> => {
-    const response = await api.get('/stream-alerts/limits');
+  getLimits: async (creatorSlug?: string): Promise<StreamAlertLimits> => {
+    const qs = creatorSlug
+      ? `?creatorSlug=${encodeURIComponent(creatorSlug)}`
+      : '';
+    const response = await api.get(`/stream-alerts/limits${qs}`);
     return response.data;
   },
   checkout: async (
@@ -140,6 +205,7 @@ export interface CoachingBookingCheckoutDto {
   accountUsername: string;
   availability?: string;
   notes?: string;
+  creatorSlug?: string;
 }
 
 export interface CoachingBookingCheckoutResponse {
@@ -148,14 +214,56 @@ export interface CoachingBookingCheckoutResponse {
 }
 
 export const coachingBookingApi = {
-  getPricing: async (): Promise<{ accountReviewKes: number }> => {
-    const response = await api.get('/coaching-bookings/pricing');
+  getPricing: async (
+    creatorSlug?: string,
+  ): Promise<{ accountReviewKes: number }> => {
+    const qs = creatorSlug
+      ? `?creatorSlug=${encodeURIComponent(creatorSlug)}`
+      : '';
+    const response = await api.get(`/coaching-bookings/pricing${qs}`);
     return response.data;
   },
   checkout: async (
     data: CoachingBookingCheckoutDto,
   ): Promise<CoachingBookingCheckoutResponse> => {
     const response = await api.post('/coaching-bookings/checkout', data);
+    return response.data;
+  },
+};
+
+export interface PublicCreatorReward {
+  id: string;
+  name: string;
+  description: string | null;
+  amountKes: number;
+  alertBannerLabel: string;
+  allowSupporterMessage: boolean;
+  allowVideoClip: boolean;
+  maxMessageLength: number;
+  accentColor: string | null;
+}
+
+export interface CreatorRewardCheckoutDto {
+  displayName: string;
+  mpesaMobile: string;
+  platform?: StreamAlertPlatform;
+  message?: string;
+  videoUrl?: string;
+}
+
+export const creatorRewardApi = {
+  list: async (creatorSlug?: string): Promise<PublicCreatorReward[]> => {
+    const qs = creatorSlug
+      ? `?creatorSlug=${encodeURIComponent(creatorSlug)}`
+      : '';
+    const response = await api.get(`/creator-rewards${qs}`);
+    return response.data;
+  },
+  checkout: async (
+    rewardId: string,
+    data: CreatorRewardCheckoutDto,
+  ): Promise<StreamAlertCheckoutResponse> => {
+    const response = await api.post(`/creator-rewards/${rewardId}/checkout`, data);
     return response.data;
   },
 };

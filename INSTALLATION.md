@@ -33,7 +33,7 @@ npm install
 
 **Backend** (`.env` file):
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/mohagamer
+DATABASE_URL=postgresql://user:password@localhost:5432/makulutu
 MEGAPAY_API_KEY=your_api_key
 MEGAPAY_EMAIL=your_email@example.com
 MEGAPAY_BASE_URL=https://megapay.co.ke/backend/v1

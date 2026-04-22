@@ -5,6 +5,7 @@ import {
   Matches,
   IsOptional,
   Min,
+  IsIn,
 } from 'class-validator';
 
 export class RegisterSubscriptionDto {
@@ -38,4 +39,17 @@ export class RegisterSubscriptionDto {
   @IsOptional()
   @IsNumber()
   monthlyPrice?: number;
+
+  /** Optional public creator slug for creator-scoped checkout flows. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9-]{3,64}$/, {
+    message: 'creatorSlug must be lowercase letters, numbers, or hyphens',
+  })
+  creatorSlug?: string;
+
+  /** `mpesa` (default): STK push. `paypal`: redirect to PayPal (requires server env). */
+  @IsOptional()
+  @IsIn(['mpesa', 'paypal'])
+  paymentMethod?: 'mpesa' | 'paypal';
 }

@@ -55,7 +55,7 @@ docker-compose logs -f backend
 
 **Fix:**
 - Make sure PostgreSQL is running: `docker-compose ps postgres`
-- Check DATABASE_URL is correct: `postgresql://postgres:postgres@postgres:5432/mohagamer`
+- Check DATABASE_URL is correct: `postgresql://postgres:postgres@postgres:5432/makulutu`
 - Wait for PostgreSQL to be healthy before starting backend
 
 ### 2. Prisma Client Missing

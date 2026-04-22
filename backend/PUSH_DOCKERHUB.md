@@ -10,10 +10,10 @@ The image name format was incorrect. Use these commands:
 cd backend
 
 # Tag the existing image (from docker-compose build)
-docker tag backend-backend:latest guyoDev254/mohagamer-backend:latest
+docker tag backend-backend:latest guyoDev254/makulutu-backend:latest
 
 # Verify the tag
-docker images | grep guyoDev254/mohagamer-backend
+docker images | grep guyoDev254/makulutu-backend
 ```
 
 ### Step 2: Login to Docker Hub
@@ -26,7 +26,7 @@ docker login
 ### Step 3: Push the Image
 
 ```bash
-docker push guyoDev254/mohagamer-backend:latest
+docker push guyoDev254/makulutu-backend:latest
 ```
 
 ## 🚀 Quick Script
@@ -40,10 +40,10 @@ cd backend
 
 ```bash
 # Check image exists
-docker images | grep mohagamer-backend
+docker images | grep makulutu-backend
 
 # Should show:
-# guyoDev254/mohagamer-backend   latest   <image-id>   <time>   <size>
+# guyoDev254/makulutu-backend   latest   <image-id>   <time>   <size>
 ```
 
 ## 📋 Complete Manual Steps
@@ -52,30 +52,30 @@ docker images | grep mohagamer-backend
 cd backend
 
 # 1. Tag correctly
-docker tag backend-backend:latest guyoDev254/mohagamer-backend:latest
+docker tag backend-backend:latest guyoDev254/makulutu-backend:latest
 
 # 2. Login
 docker login
 
 # 3. Push
-docker push guyoDev254/mohagamer-backend:latest
+docker push guyoDev254/makulutu-backend:latest
 ```
 
 ## ✅ After Successful Push
 
 **View on Docker Hub:**
-- https://hub.docker.com/r/guyoDev254/mohagamer-backend
+- https://hub.docker.com/r/guyoDev254/makulutu-backend
 
 **Pull the image:**
 ```bash
-docker pull guyoDev254/mohagamer-backend:latest
+docker pull guyoDev254/makulutu-backend:latest
 ```
 
 **Use in docker-compose:**
 ```yaml
 services:
   backend:
-    image: guyoDev254/mohagamer-backend:latest
+    image: guyoDev254/makulutu-backend:latest
 ```
 
 ---

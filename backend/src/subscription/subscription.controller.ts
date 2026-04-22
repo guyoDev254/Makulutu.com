@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Delete,
+  Query,
   Logger,
 } from '@nestjs/common';
 import { SubscriptionService } from './subscription.service';
@@ -15,6 +16,11 @@ import { RegisterSubscriptionDto } from './dto/register-subscription.dto';
 import { PaymentService } from '../payment/payment.service';
 import { UserService } from '../user/user.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveDefaultCreatorId } from '../common/utils/default-creator';
+import {
+  fetchCreatorWorkspacePatch,
+  mergeWorkspaceMonthlyPrice,
+} from '../common/utils/creator-workspace-settings';
 
 @Controller('subscriptions')
 export class SubscriptionController {
@@ -27,8 +33,29 @@ export class SubscriptionController {
     private readonly prisma: PrismaService,
   ) {}
 
+  /** Public: membership, live shoutout, and custom reward tiers in display order. */
+  @Get('support-catalog')
+  getSupportCatalog(@Query('creatorSlug') creatorSlug?: string) {
+    return this.paymentService.getPublicSupportCatalog(creatorSlug);
+  }
+
   @Post('register')
   async register(@Body() registerDto: RegisterSubscriptionDto) {
+    let defaultCreatorId = await resolveDefaultCreatorId(this.prisma);
+    const creatorSlug = registerDto.creatorSlug?.trim().toLowerCase();
+    if (creatorSlug) {
+      const creator = await this.prisma.creator.findFirst({
+        where: {
+          slug: { equals: creatorSlug, mode: 'insensitive' },
+          isActive: true,
+          onboardingComplete: true,
+          supportEnabled: true,
+        },
+        select: { id: true },
+      });
+      if (creator) defaultCreatorId = creator.id;
+    }
+
     // Check if user already exists
     let user = await this.userService.findByTikTokUsername(
       registerDto.tiktokUsername,
@@ -41,16 +68,20 @@ export class SubscriptionController {
         tiktokUsername: registerDto.tiktokUsername,
         mpesaMobile: registerDto.mpesaMobile,
         whatsappNumber: registerDto.whatsappNumber,
+        ...(defaultCreatorId ? { creatorId: defaultCreatorId } : {}),
       });
     } else {
       // User exists - update phone numbers if they're different
       // This ensures STK Push goes to the correct phone number
-      const needsUpdate = 
+      const needsUpdate =
         user.mpesaMobile !== registerDto.mpesaMobile ||
         user.whatsappNumber !== registerDto.whatsappNumber ||
         user.name !== registerDto.name;
 
-      if (needsUpdate) {
+      const needsCreator =
+        !user.creatorId && defaultCreatorId;
+
+      if (needsUpdate || needsCreator) {
         this.logger.log(
           `Updating user ${user.tiktokUsername} phone numbers: M-Pesa ${user.mpesaMobile} -> ${registerDto.mpesaMobile}, WhatsApp ${user.whatsappNumber} -> ${registerDto.whatsappNumber}`,
         );
@@ -58,6 +89,9 @@ export class SubscriptionController {
           name: registerDto.name,
           mpesaMobile: registerDto.mpesaMobile,
           whatsappNumber: registerDto.whatsappNumber,
+          ...(needsCreator && defaultCreatorId
+            ? { creatorId: defaultCreatorId }
+            : {}),
         });
       }
     }
@@ -71,10 +105,28 @@ export class SubscriptionController {
       monthlyPrice = settings ? parseFloat(settings.value) : 1; // Default 1 KES per month
     }
     const amount = monthlyPrice * registerDto.months;
+    const payMethod = (registerDto.paymentMethod || 'mpesa').toLowerCase();
 
-    // Create payment (this will initiate STK Push)
+    if (payMethod === 'paypal') {
+      const { payment, approvalUrl } =
+        await this.paymentService.createSubscriptionPayPalCheckout({
+          userId: user.id,
+          creatorId: defaultCreatorId ?? undefined,
+          amount,
+          months: registerDto.months,
+          reference: `SUB_${user.id}_${Date.now()}`,
+        });
+      return {
+        user,
+        payment,
+        approvalUrl,
+        message: 'Continue to PayPal to complete payment.',
+      };
+    }
+
     const payment = await this.paymentService.create({
       userId: user.id,
+      creatorId: defaultCreatorId ?? undefined,
       amount,
       months: registerDto.months,
       reference: `SUB_${user.id}_${Date.now()}`,
@@ -108,11 +160,32 @@ export class SubscriptionController {
   }
 
   @Get('price')
-  async getMonthlyPrice() {
+  async getMonthlyPrice(@Query('creatorSlug') creatorSlug?: string) {
     const settings = await this.prisma.settings.findUnique({
       where: { key: 'default_monthly_price' },
     });
-    const monthlyPrice = settings ? parseFloat(settings.value) : 1;
+    const parsed = settings ? parseFloat(settings.value) : 1;
+    let monthlyPrice =
+      Number.isFinite(parsed) && parsed >= 1 ? Math.round(parsed) : 1;
+
+    const slug = creatorSlug?.trim().toLowerCase();
+    if (slug) {
+      const creator = await this.prisma.creator.findFirst({
+        where: {
+          slug: { equals: slug, mode: 'insensitive' },
+          isActive: true,
+        },
+        select: { id: true },
+      });
+      if (creator) {
+        const patch = await fetchCreatorWorkspacePatch(
+          this.prisma,
+          creator.id,
+        );
+        monthlyPrice = mergeWorkspaceMonthlyPrice(monthlyPrice, patch);
+      }
+    }
+
     return { monthlyPrice };
   }
 

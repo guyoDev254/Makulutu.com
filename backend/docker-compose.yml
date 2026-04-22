@@ -3,13 +3,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mohagamer-backend
+    container_name: makulutu-backend
     ports:
       - "2000:2000"
     environment:
       - NODE_ENV=production
       - PORT=2000
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mohagamer
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/makulutu
       - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
@@ -39,11 +39,11 @@ services:
 
   postgres:
     image: postgres:15-alpine
-    container_name: mohagamer-postgres
+    container_name: makulutu-postgres
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=${POSTGRES_DB:-mohagamer}
+      - POSTGRES_DB=${POSTGRES_DB:-makulutu}
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
     volumes:

@@ -59,6 +59,20 @@ export class UserService {
     });
   }
 
+  /** Match whether the DB stored 254… or 07…. */
+  async findByMpesaMobileEitherForm(msisdn: string): Promise<User | null> {
+    const trimmed = msisdn.trim();
+    const as254 = trimmed.startsWith('254')
+      ? trimmed
+      : trimmed.startsWith('0')
+        ? `254${trimmed.slice(1)}`
+        : `254${trimmed}`;
+    const as0 = `0${as254.slice(3)}`;
+    return await this.prisma.user.findFirst({
+      where: { OR: [{ mpesaMobile: as254 }, { mpesaMobile: as0 }] },
+    });
+  }
+
   async update(id: string, updateData: Prisma.UserUpdateInput): Promise<User> {
     try {
       return await this.prisma.user.update({

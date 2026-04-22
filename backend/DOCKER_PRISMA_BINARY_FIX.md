@@ -10,7 +10,7 @@ The binary target `linux-musl-openssl-1.1.x` doesn't exist. Updated to use `linu
 cd backend
 
 # Rebuild for AMD64
-docker build --platform linux/amd64 -t guyoDev254/mohagamer-backend:latest -f Dockerfile .
+docker build --platform linux/amd64 -t guyoDev254/makulutu-backend:latest -f Dockerfile .
 ```
 
 ## 📋 What Changed

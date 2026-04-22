@@ -14,13 +14,13 @@ Use lowercase username: `guyodev254`
 cd backend
 
 # Tag with lowercase username
-docker tag backend-backend:latest guyodev254/mohagamer-backend:latest
+docker tag backend-backend:latest guyodev254/makulutu-backend:latest
 
 # Login
 docker login
 
 # Push
-docker push guyodev254/mohagamer-backend:latest
+docker push guyodev254/makulutu-backend:latest
 ```
 
 ### Or Use Updated Script
@@ -45,12 +45,12 @@ cd backend
 ## ✅ Correct Format
 
 **Correct:**
-- `guyodev254/mohagamer-backend:latest`
+- `guyodev254/makulutu-backend:latest`
 - `username/repository:tag` (all lowercase)
 
 **Incorrect:**
-- `guyoDev254/mohagamer-backend:latest` (uppercase in username)
-- `GuyoDev254/mohagamer-backend:latest` (uppercase)
+- `guyoDev254/makulutu-backend:latest` (uppercase in username)
+- `GuyoDev254/makulutu-backend:latest` (uppercase)
 
 ---
 

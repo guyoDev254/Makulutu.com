@@ -12,10 +12,14 @@ export class SubscriptionService {
     months: number,
     amount: number,
     paymentId?: string,
+    creatorId?: string | null,
   ): Promise<Subscription> {
     const startDate = new Date();
     const endDate = new Date();
     endDate.setMonth(endDate.getMonth() + months);
+
+    const resolvedCreatorId =
+      creatorId ?? (user as { creatorId?: string | null }).creatorId ?? null;
 
     return await this.prisma.subscription.create({
       data: {
@@ -26,6 +30,7 @@ export class SubscriptionService {
         amount,
         paymentId,
         status: SubscriptionStatus.ACTIVE,
+        ...(resolvedCreatorId ? { creatorId: resolvedCreatorId } : {}),
       },
     });
   }
@@ -183,18 +188,23 @@ export class SubscriptionService {
     }
   }
 
-  async getStats() {
+  async getStats(scopedCreatorId?: string | null) {
     const now = new Date();
+    const scope =
+      scopedCreatorId && scopedCreatorId.length > 0
+        ? { creatorId: scopedCreatorId }
+        : {};
     const [total, active, expired] = await Promise.all([
-      this.prisma.subscription.count(),
+      this.prisma.subscription.count({ where: scope }),
       this.prisma.subscription.count({
         where: {
+          ...scope,
           status: SubscriptionStatus.ACTIVE,
           endDate: { gt: now },
         },
       }),
       this.prisma.subscription.count({
-        where: { status: SubscriptionStatus.EXPIRED },
+        where: { ...scope, status: SubscriptionStatus.EXPIRED },
       }),
     ]);
 

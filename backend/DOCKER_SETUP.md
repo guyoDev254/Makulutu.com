@@ -54,7 +54,7 @@ Create or update `.env` file in the backend directory:
 
 ```env
 # Database
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/makulutu
 
 # JWT
 JWT_SECRET=your-secret-key-change-in-production
@@ -76,7 +76,7 @@ WHATSAPP_API_VERSION=v22.0
 # PostgreSQL (for docker-compose)
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
-POSTGRES_DB=mohagamer
+POSTGRES_DB=makulutu
 ```
 
 ### 2. Database Migrations
@@ -106,13 +106,13 @@ docker-compose exec backend yarn prisma:seed
 ### Build Production Image
 
 ```bash
-docker build -t mohagamer-backend:latest .
+docker build -t makulutu-backend:latest .
 ```
 
 ### Build Development Image
 
 ```bash
-docker build -f Dockerfile.dev -t mohagamer-backend:dev .
+docker build -f Dockerfile.dev -t makulutu-backend:dev .
 ```
 
 ## 🐳 Docker Commands
@@ -122,18 +122,18 @@ docker build -f Dockerfile.dev -t mohagamer-backend:dev .
 ```bash
 # Production
 docker run -d \
-  --name mohagamer-backend \
+  --name makulutu-backend \
   -p 2000:2000 \
   --env-file .env \
-  mohagamer-backend:latest
+  makulutu-backend:latest
 
 # Development
 docker run -d \
-  --name mohagamer-backend-dev \
+  --name makulutu-backend-dev \
   -p 2000:2000 \
   -v $(pwd):/app \
   --env-file .env \
-  mohagamer-backend:dev
+  makulutu-backend:dev
 ```
 
 ### View Logs
@@ -143,7 +143,7 @@ docker run -d \
 docker-compose logs -f backend
 
 # Using docker
-docker logs -f mohagamer-backend
+docker logs -f makulutu-backend
 ```
 
 ### Execute Commands in Container
@@ -153,7 +153,7 @@ docker logs -f mohagamer-backend
 docker-compose exec backend sh
 
 # Using docker
-docker exec -it mohagamer-backend sh
+docker exec -it makulutu-backend sh
 
 # Run Prisma commands
 docker-compose exec backend yarn prisma generate
@@ -194,7 +194,7 @@ docker-compose ps postgres
 
 2. Check database URL in .env matches docker-compose service name:
 ```env
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/makulutu
 ```
 
 ### Prisma Client Not Generated
@@ -218,13 +218,13 @@ sudo chown -R $USER:$USER .
 
 ```bash
 # Build image
-docker build -t mohagamer-backend:latest .
+docker build -t makulutu-backend:latest .
 
 # Tag for registry
-docker tag mohagamer-backend:latest your-registry/mohagamer-backend:latest
+docker tag makulutu-backend:latest your-registry/makulutu-backend:latest
 
 # Push to registry
-docker push your-registry/mohagamer-backend:latest
+docker push your-registry/makulutu-backend:latest
 ```
 
 ### Production Considerations
@@ -242,7 +242,7 @@ The Dockerfile includes a health check:
 
 ```bash
 # Check health status
-docker inspect --format='{{.State.Health.Status}}' mohagamer-backend
+docker inspect --format='{{.State.Health.Status}}' makulutu-backend
 ```
 
 ## 🔐 Security Best Practices
@@ -253,7 +253,7 @@ docker inspect --format='{{.State.Health.Status}}' mohagamer-backend
 4. ✅ Environment variables for secrets
 5. ✅ Health checks configured
 6. ⚠️ Use secrets management in production
-7. ⚠️ Scan images for vulnerabilities: `docker scan mohagamer-backend`
+7. ⚠️ Scan images for vulnerabilities: `docker scan makulutu-backend`
 
 ## 📝 Notes
 

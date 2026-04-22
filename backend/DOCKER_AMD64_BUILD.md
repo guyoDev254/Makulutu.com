@@ -14,7 +14,7 @@ All Dockerfiles have been updated to build for `linux/amd64` architecture, ensur
 
 ```bash
 cd backend
-./build-amd.sh mohagamer-backend latest
+./build-amd.sh makulutu-backend latest
 ```
 
 ### Option 2: Manual Build
@@ -23,7 +23,7 @@ cd backend
 cd backend
 
 # Build for AMD64
-docker build --platform linux/amd64 -t mohagamer-backend:latest -f Dockerfile .
+docker build --platform linux/amd64 -t makulutu-backend:latest -f Dockerfile .
 
 # Or with docker-compose
 docker-compose build --platform linux/amd64
@@ -36,7 +36,7 @@ docker-compose build --platform linux/amd64
 ```bash
 docker build \
   --platform linux/amd64 \
-  -t mohagamer-backend:latest \
+  -t makulutu-backend:latest \
   -f Dockerfile .
 ```
 
@@ -45,7 +45,7 @@ docker build \
 ```bash
 docker build \
   --platform linux/amd64 \
-  -t mohagamer-backend:dev \
+  -t makulutu-backend:dev \
   -f Dockerfile.dev .
 ```
 
@@ -53,17 +53,17 @@ docker build \
 
 ```bash
 # Build for AMD64
-docker build --platform linux/amd64 -t your-username/mohagamer-backend:latest -f Dockerfile .
+docker build --platform linux/amd64 -t your-username/makulutu-backend:latest -f Dockerfile .
 
 # Push to registry
-docker push your-username/mohagamer-backend:latest
+docker push your-username/makulutu-backend:latest
 ```
 
 ## 🔍 Verify Architecture
 
 ```bash
 # Check image architecture
-docker inspect mohagamer-backend:latest | grep Architecture
+docker inspect makulutu-backend:latest | grep Architecture
 
 # Should show: "Architecture": "amd64"
 ```
@@ -79,7 +79,7 @@ docker buildx create --name multiarch --use
 # Build for multiple platforms
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t your-username/mohagamer-backend:latest \
+  -t your-username/makulutu-backend:latest \
   -f Dockerfile \
   --push
 ```

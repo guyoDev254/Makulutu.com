@@ -12,36 +12,61 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(uuid())
-  name          String
-  tiktokUsername String        @unique @map("tiktok_username")
-  mpesaMobile   String         @map("mpesa_mobile")
-  whatsappNumber String        @map("whatsapp_number")
-  isActive      Boolean        @default(true) @map("is_active")
-  addedToWhatsApp Boolean     @default(false) @map("added_to_whatsapp")
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
+  id             String    @id @default(uuid())
+  name           String?
+  tiktokUsername String?   @unique @map("tiktok_username")
+  mpesaMobile    String?   @map("mpesa_mobile")
+  whatsappNumber String?   @map("whatsapp_number")
+  isActive       Boolean?  @default(true) @map("is_active")
+  addedToWhatsApp Boolean? @default(false) @map("added_to_whatsapp")
+  /// Supporter account scoped to a creator (null = legacy before multi-tenant).
+  creatorId      String?   @map("creator_id")
+  createdAt      DateTime? @default(now()) @map("created_at")
+  updatedAt      DateTime? @updatedAt @map("updated_at")
 
+  creator       Creator?       @relation(fields: [creatorId], references: [id], onDelete: SetNull)
   subscriptions Subscription[]
   payments      Payment[]
 
+  @@index([creatorId])
   @@map("users")
 }
 
+/// Paid shoutout checkout data (separate from subscription billing). Linked 1:1 to Payment when purpose is STREAM_ALERT.
+model StreamShoutout {
+  id            String   @id @default(uuid())
+  paymentId     String   @unique @map("payment_id")
+  displayHandle String   @map("display_handle") @db.VarChar(64)
+  platform      String   @db.VarChar(32)
+  message       String?  @db.VarChar(500)
+  /// Optional TikTok page URL for OBS embed (validated at checkout).
+  videoUrl      String?  @map("video_url") @db.VarChar(500)
+  amountKes     Decimal  @map("amount_kes") @db.Decimal(10, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@map("stream_shoutouts")
+}
+
 model Subscription {
-  id          String             @id @default(uuid())
-  userId      String             @map("user_id")
-  months      Int
-  startDate   DateTime           @map("start_date") @db.Date
-  endDate     DateTime           @map("end_date") @db.Date
-  status      SubscriptionStatus  @default(ACTIVE)
-  amount      Decimal            @db.Decimal(10, 2)
-  paymentId   String?            @map("payment_id")
-  createdAt   DateTime           @default(now()) @map("created_at")
-  updatedAt   DateTime           @updatedAt @map("updated_at")
+  id        String              @id @default(uuid())
+  userId    String?             @map("user_id")
+  months    Int?
+  startDate DateTime?           @map("start_date") @db.Date
+  endDate   DateTime?           @map("end_date") @db.Date
+  status    SubscriptionStatus? @default(ACTIVE)
+  amount    Decimal?            @db.Decimal(10, 2)
+  paymentId String?             @map("payment_id")
+  creatorId String?             @map("creator_id")
+  createdAt DateTime?           @default(now()) @map("created_at")
+  updatedAt DateTime?           @updatedAt @map("updated_at")
 
-  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  creator Creator? @relation(fields: [creatorId], references: [id], onDelete: SetNull)
 
+  @@index([creatorId])
   @@map("subscriptions")
 }
 
@@ -51,26 +76,58 @@ enum SubscriptionStatus {
   CANCELLED
 }
 
+enum PaymentPurpose {
+  SUBSCRIPTION
+  STREAM_ALERT
+  COACHING_BOOKING
+  CREATOR_REWARD
+}
+
+enum PaymentMethod {
+  MPESA
+  PAYPAL
+}
+
 model Payment {
-  id                  String        @id @default(uuid())
-  userId              String        @map("user_id")
-  amount              Decimal       @db.Decimal(10, 2)
-  months              Int           @default(1)
-  status              PaymentStatus @default(PENDING)
-  transactionRequestId String?       @map("transaction_request_id")
-  transactionId       String?       @map("transaction_id")
-  transactionReceipt  String?       @map("transaction_receipt")
-  merchantRequestId   String?       @map("merchant_request_id")
-  checkoutRequestId   String?       @map("checkout_request_id")
-  reference           String?
-  failureReason       String?       @map("failure_reason")
-  completedAt         DateTime?     @map("completed_at")
-  failedAt            DateTime?     @map("failed_at")
-  createdAt           DateTime       @default(now()) @map("created_at")
-  updatedAt           DateTime       @updatedAt @map("updated_at")
+  id                       String         @id @default(uuid())
+  userId                   String?        @map("user_id")
+  creatorId                String?        @map("creator_id")
+  amount                   Decimal?       @db.Decimal(10, 2)
+  months                   Int?           @default(1)
+  purpose                  PaymentPurpose? @default(SUBSCRIPTION) @map("purpose")
+  paymentMethod            PaymentMethod  @default(MPESA) @map("payment_method")
+  status                   PaymentStatus? @default(PENDING)
+  /// PayPal Checkout order ID (v2/orders) while pending or after capture.
+  paypalOrderId            String?        @map("paypal_order_id")
+  transactionRequestId     String?        @map("transaction_request_id")
+  transactionId            String?        @map("transaction_id")
+  transactionReceipt       String?        @map("transaction_receipt")
+  merchantRequestId        String?        @map("merchant_request_id")
+  checkoutRequestId        String?        @map("checkout_request_id")
+  reference                String?
+  /// Legacy DB column from earlier subscribe flow — keep mapped so `db push` does not drop data.
+  subscriberMessage        String?        @map("subscriber_message") @db.VarChar(500)
+  subscriberPlatform       String?        @map("subscriber_platform") @db.VarChar(32)
+  /// Legacy shoutout fields — prefer `streamShoutout` for new rows.
+  streamAlertHandle        String?        @map("stream_alert_handle") @db.VarChar(64)
+  streamAlertPlatform      String?        @map("stream_alert_platform") @db.VarChar(32)
+  streamAlertMessage       String?        @map("stream_alert_message") @db.VarChar(100)
+  streamShoutout           StreamShoutout?
+  creatorRewardPurchase    CreatorRewardPurchase?
+  coachingBookings         CoachingBooking[]
+  failureReason            String?        @map("failure_reason")
+  completedAt              DateTime?      @map("completed_at")
+  /// Set when the subscriber OBS alert has been sent for this payment (idempotent across webhook vs poll).
+  subscriberAlertEmittedAt DateTime?      @map("subscriber_alert_emitted_at")
+  failedAt                 DateTime?      @map("failed_at")
+  createdAt                DateTime?      @default(now()) @map("created_at")
+  updatedAt                DateTime?      @updatedAt @map("updated_at")
 
-  user                User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  creator Creator? @relation(fields: [creatorId], references: [id], onDelete: SetNull)
 
+  @@index([creatorId])
+  @@index([paypalOrderId])
   @@map("payments")
 }
 
@@ -82,17 +139,60 @@ enum PaymentStatus {
 }
 
 model Admin {
-  id        String   @id @default(uuid())
-  username  String   @unique
-  email     String   @unique
-  password  String
-  role      AdminRole @default(ADMIN)
-  isActive  Boolean  @default(true) @map("is_active")
-  lastLogin DateTime? @map("last_login")
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
+  id        String     @id @default(uuid())
+  username  String?    @unique
+  email     String?    @unique
+  password  String?
+  role      AdminRole? @default(ADMIN)
+  isActive  Boolean?   @default(true) @map("is_active")
+  lastLogin DateTime?  @map("last_login")
+  createdAt DateTime?  @default(now()) @map("created_at")
+  updatedAt DateTime?  @updatedAt @map("updated_at")
 
   @@map("admins")
+}
+
+model Creator {
+  id                String    @id @default(uuid())
+  email             String    @unique @db.VarChar(190)
+  password          String
+  slug              String    @unique @db.VarChar(64)
+  displayName       String    @db.VarChar(80)
+  bio               String?   @db.VarChar(300)
+  whatIDo           String?   @map("what_i_do") @db.VarChar(1200)
+  packagesSummary   String?   @map("packages_summary") @db.VarChar(1200)
+  socialLinks       String?   @map("social_links") @db.VarChar(1200)
+  avatarUrl         String?   @map("avatar_url") @db.VarChar(500)
+  primaryCategory   String?   @map("primary_category") @db.VarChar(80)
+  supportEnabled    Boolean   @default(true) @map("support_enabled")
+  onboardingComplete Boolean  @default(false) @map("onboarding_complete")
+  isActive          Boolean   @default(true) @map("is_active")
+  emailVerifiedAt   DateTime? @map("email_verified_at")
+  emailVerificationTokenHash String? @map("email_verification_token_hash") @db.VarChar(128)
+  emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
+  passwordResetTokenHash     String?   @map("password_reset_token_hash") @db.VarChar(128)
+  passwordResetExpiresAt     DateTime? @map("password_reset_expires_at")
+  lastLogin         DateTime? @map("last_login")
+  /// Per-creator overrides for support/OBS/coaching settings (merged with global `settings` rows).
+  workspaceSettings Json?     @map("workspace_settings")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  users            User[]
+  payments         Payment[]
+  subscriptions    Subscription[]
+  creatorRewards   CreatorReward[]
+  obsStreamLinks   ObsStreamLink[]
+  payoutRequests   PayoutRequest[]
+
+  @@map("creators")
+}
+
+enum PayoutRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
 }
 
 enum AdminRole {
@@ -102,11 +202,131 @@ enum AdminRole {
 }
 
 model Settings {
-  id        String   @id @default(uuid())
-  key       String   @unique
-  value     String
-  updatedAt DateTime @updatedAt @map("updated_at")
-  updatedBy String?  @map("updated_by")
+  id        String    @id @default(uuid())
+  key       String?   @unique
+  value     String?
+  updatedAt DateTime? @updatedAt @map("updated_at")
+  updatedBy String?   @map("updated_by")
 
   @@map("settings")
+}
+
+/// Per–Browser Source tokens for OBS player + SSE (revocable).
+model ObsStreamLink {
+  id        String    @id @default(uuid())
+  label     String?   @db.VarChar(128)
+  token     String?   @unique
+  revokedAt DateTime? @map("revoked_at")
+  creatorId String?   @map("creator_id")
+  createdAt DateTime? @default(now()) @map("created_at")
+
+  creator Creator? @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+
+  @@index([creatorId])
+  @@map("obs_stream_links")
+}
+
+enum CoachingBookingService {
+  ACCOUNT_REVIEW
+  RANK_PUSH
+  BOTH
+}
+
+enum CoachingBookingStatus {
+  PENDING
+  CONTACTED
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+/// Public coaching / account review requests from the marketing site.
+model CoachingBooking {
+  id                String                  @id @default(uuid())
+  service           CoachingBookingService  @map("service")
+  name              String                  @db.VarChar(80)
+  contact           String                  @db.VarChar(120)
+  /// eFootball / game account to review (paid account review & bundle bookings).
+  accountUsername   String?                 @map("account_username") @db.VarChar(120)
+  availability      String?                 @map("availability") @db.VarChar(500)
+  notes             String?                 @db.Text
+  status            CoachingBookingStatus   @default(PENDING) @map("status")
+  adminNotes        String?                 @map("admin_notes") @db.VarChar(1000)
+  paymentId         String?                 @map("payment_id")
+  payment           Payment?                @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+
+  @@index([paymentId])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("coaching_bookings")
+}
+
+/// Admin-defined fixed-price “tier” (Patreon-style). Checkout creates Payment + CreatorRewardPurchase.
+model CreatorReward {
+  id                    String   @id @default(uuid())
+  creatorId             String?  @map("creator_id")
+  name                  String   @db.VarChar(80)
+  description           String?  @db.Text
+  amountKes             Decimal  @map("amount_kes") @db.Decimal(10, 2)
+  /// Short ALL-CAPS style label on the OBS card (e.g. HYPE SQUAD!)
+  alertBannerLabel      String   @map("alert_banner_label") @db.VarChar(40)
+  /// Optional TTS line. Placeholders: {{displayName}}, {{rewardName}}, {{amount}}, {{message}}
+  ttsScript             String?  @map("tts_script") @db.VarChar(600)
+  allowSupporterMessage Boolean  @default(true) @map("allow_supporter_message")
+  allowVideoClip        Boolean  @default(false) @map("allow_video_clip")
+  maxMessageLength      Int      @default(200) @map("max_message_length")
+  active                Boolean  @default(true)
+  sortOrder             Int      @default(0) @map("sort_order")
+  /// Optional #RRGGBB accent for the public subscribe card (null = site default amber).
+  accentColor           String?  @map("accent_color") @db.VarChar(7)
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  creator   Creator?                @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  purchases CreatorRewardPurchase[]
+
+  @@index([creatorId])
+  @@map("creator_rewards")
+}
+
+model CreatorRewardPurchase {
+  id                  String   @id @default(uuid())
+  paymentId           String   @unique @map("payment_id")
+  rewardId            String   @map("reward_id")
+  rewardNameSnapshot  String   @map("reward_name_snapshot") @db.VarChar(80)
+  bannerLabelSnapshot String   @map("banner_label_snapshot") @db.VarChar(40)
+  ttsScriptSnapshot   String?  @map("tts_script_snapshot") @db.VarChar(600)
+  displayName         String   @map("display_name") @db.VarChar(64)
+  platform            String   @default("tiktok") @db.VarChar(32)
+  supporterMessage    String?  @map("supporter_message") @db.VarChar(500)
+  videoUrl            String?  @map("video_url") @db.VarChar(500)
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  payment Payment       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  reward  CreatorReward @relation(fields: [rewardId], references: [id], onDelete: Restrict)
+
+  @@index([rewardId])
+  @@map("creator_reward_purchases")
+}
+
+model PayoutRequest {
+  id             String              @id @default(uuid())
+  creatorId      String              @map("creator_id")
+  amountKes      Decimal             @map("amount_kes") @db.Decimal(10, 2)
+  status         PayoutRequestStatus @default(PENDING)
+  payoutChannel  String?             @map("payout_channel") @db.VarChar(80)
+  payoutReference String?            @map("payout_reference") @db.VarChar(120)
+  notes          String?             @db.VarChar(1000)
+  reviewedBy     String?             @map("reviewed_by") @db.VarChar(120)
+  reviewedAt     DateTime?           @map("reviewed_at")
+  paidAt         DateTime?           @map("paid_at")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+
+  creator Creator @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId, status, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("payout_requests")
 }

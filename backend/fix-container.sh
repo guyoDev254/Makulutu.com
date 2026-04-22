@@ -9,7 +9,7 @@ docker-compose down
 
 echo ""
 echo "📋 Checking if PostgreSQL is needed..."
-if ! docker ps | grep -q mohagamer-postgres; then
+if ! docker ps | grep -q makulutu-postgres; then
   echo "🚀 Starting PostgreSQL first..."
   docker-compose up postgres -d
   

@@ -4,6 +4,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { LoginDto } from './dto/login.dto';
 import { Admin } from '@prisma/client';
+import {
+  findAdminByLoginIdentifier,
+  promoteSeededAdminUsernameIfAlias,
+} from '../common/utils/admin-login-lookup';
 
 @Injectable()
 export class AuthService {
@@ -15,9 +19,8 @@ export class AuthService {
   ) {}
 
   async validateAdmin(username: string, password: string): Promise<Admin | null> {
-    const admin = await this.prisma.admin.findUnique({
-      where: { username },
-    });
+    const trimmed = username.trim();
+    let admin = await findAdminByLoginIdentifier(this.prisma, trimmed);
 
     if (!admin) {
       return null;
@@ -27,12 +30,17 @@ export class AuthService {
       throw new UnauthorizedException('Admin account is inactive');
     }
 
+    if (!admin.password) {
+      return null;
+    }
+
     const isPasswordValid = await bcrypt.compare(password, admin.password);
     if (!isPasswordValid) {
       return null;
     }
 
-    // Update last login
+    admin = await promoteSeededAdminUsernameIfAlias(this.prisma, admin, trimmed);
+
     await this.prisma.admin.update({
       where: { id: admin.id },
       data: { lastLogin: new Date() },

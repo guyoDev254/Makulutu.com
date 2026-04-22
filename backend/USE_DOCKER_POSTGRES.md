@@ -24,7 +24,7 @@ If you want to run Prisma commands locally (not in Docker), update your `.env`:
 
 ```env
 # Use Docker PostgreSQL (port 5433 on host)
-DATABASE_URL=postgresql://postgres:postgres@localhost:5433/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@localhost:5433/makulutu
 ```
 
 ### 3. Run Migrations
@@ -37,7 +37,7 @@ docker-compose -f docker-compose.dev.yml exec backend yarn prisma migrate dev
 **Option B: Locally**
 ```bash
 # Make sure .env has DATABASE_URL pointing to localhost:5433
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5433/mohagamer"
+export DATABASE_URL="postgresql://postgres:postgres@localhost:5433/makulutu"
 yarn prisma migrate dev
 ```
 
@@ -45,21 +45,21 @@ yarn prisma migrate dev
 
 ### Inside Docker Containers
 ```env
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/makulutu
 ```
 - Host: `postgres` (service name)
 - Port: `5432` (internal Docker network)
-- Database: `mohagamer`
+- Database: `makulutu`
 - User: `postgres`
 - Password: `postgres`
 
 ### From Host Machine (Local Development)
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5433/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@localhost:5433/makulutu
 ```
 - Host: `localhost`
 - Port: `5433` (mapped from container's 5432)
-- Database: `mohagamer`
+- Database: `makulutu`
 - User: `postgres`
 - Password: `postgres`
 
@@ -80,12 +80,12 @@ docker-compose exec backend yarn prisma db push
 
 ### From Host Machine
 ```bash
-psql -h localhost -p 5433 -U postgres -d mohagamer
+psql -h localhost -p 5433 -U postgres -d makulutu
 ```
 
 ### From Docker Container
 ```bash
-docker-compose exec postgres psql -U postgres -d mohagamer
+docker-compose exec postgres psql -U postgres -d makulutu
 ```
 
 ## 🗄️ Database Operations

@@ -1,6 +1,6 @@
 'use client'
 
-import { Lock, X, Loader2, Save } from 'lucide-react'
+import { Lock, X, Loader2, Save, ExternalLink, RotateCcw } from 'lucide-react'
 import type { AdminDashboardModel } from '@/components/admin/adminDashboardTypes'
 
 export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) {
@@ -27,6 +27,18 @@ export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) 
     editPaymentForm,
     setEditPaymentForm,
     handleSavePayment,
+    handleEditPayment,
+    tierPurchaseDetailOpen,
+    tierPurchaseDetail,
+    tierPurchaseDetailLoading,
+    closeTierPurchaseDetail,
+    replayPaymentObsAlert,
+    replayingPaymentId,
+    isAdminOrSuper,
+    formatAmountForRole,
+    formatDate,
+    shoutoutPlatformLabel,
+    getStatusBadge,
     creatingSubscription,
     setCreatingSubscription,
     newSubscriptionForm,
@@ -607,6 +619,225 @@ export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) 
                 <Save className="w-4 h-4" />
                 Create Subscription
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tierPurchaseDetailOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-xl">
+            <div className="p-6 border-b border-gray-700 flex items-center justify-between shrink-0">
+              <h2 className="text-xl font-bold text-white">Tier purchase</h2>
+              <button
+                type="button"
+                onClick={closeTierPurchaseDetail}
+                className="p-2 hover:bg-gray-700 rounded-lg transition"
+              >
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1 space-y-6">
+              {tierPurchaseDetailLoading || !tierPurchaseDetail ? (
+                <div className="flex justify-center py-16">
+                  <Loader2 className="w-10 h-10 text-amber-400 animate-spin" aria-hidden />
+                </div>
+              ) : (
+                (() => {
+                  const p = tierPurchaseDetail
+                  const cr = p.creatorRewardPurchase
+                  const videoUrl = typeof cr?.videoUrl === 'string' ? cr.videoUrl.trim() : ''
+                  return (
+                    <>
+                      {!cr ? (
+                        <p className="text-sm text-amber-200/90">
+                          This payment has no reward-tier checkout row linked. It may be an older or manual record.
+                        </p>
+                      ) : null}
+
+                      <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-4 space-y-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-200/80">
+                          Tier &amp; on-stream copy
+                        </h3>
+                        <div className="space-y-2 text-sm">
+                          <div>
+                            <span className="text-gray-500">Tier (at checkout)</span>
+                            <p className="text-white font-medium">{cr?.rewardNameSnapshot ?? '—'}</p>
+                            {cr?.reward?.name && cr.reward.name !== cr.rewardNameSnapshot ? (
+                              <p className="text-gray-400 text-xs mt-0.5">
+                                Current tier name: {cr.reward.name}
+                              </p>
+                            ) : null}
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Banner label (snapshot)</span>
+                            <p className="text-white font-mono text-xs mt-0.5">{cr?.bannerLabelSnapshot ?? '—'}</p>
+                          </div>
+                          {cr?.ttsScriptSnapshot ? (
+                            <div>
+                              <span className="text-gray-500">TTS script (snapshot)</span>
+                              <p className="text-gray-200 text-xs mt-1 whitespace-pre-wrap break-words">
+                                {cr.ttsScriptSnapshot}
+                              </p>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-gray-600/50 bg-gray-900/40 p-4 space-y-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                          Supporter
+                        </h3>
+                        <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                          <div>
+                            <dt className="text-gray-500">Display name</dt>
+                            <dd className="text-white font-medium">{cr?.displayName ?? '—'}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-gray-500">Platform</dt>
+                            <dd className="text-white">{shoutoutPlatformLabel(cr?.platform)}</dd>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <dt className="text-gray-500">Message</dt>
+                            <dd className="text-gray-200 mt-0.5 whitespace-pre-wrap break-words">
+                              {cr?.supporterMessage?.trim() ? cr.supporterMessage : (
+                                <span className="text-gray-500 italic">None</span>
+                              )}
+                            </dd>
+                          </div>
+                          {videoUrl ? (
+                            <div className="sm:col-span-2">
+                              <dt className="text-gray-500">Video clip</dt>
+                              <dd className="mt-1">
+                                <a
+                                  href={videoUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1.5 text-cyan-400 hover:text-cyan-300 text-sm break-all"
+                                >
+                                  <ExternalLink className="w-4 h-4 shrink-0" aria-hidden />
+                                  {videoUrl}
+                                </a>
+                              </dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                      </div>
+
+                      <div className="rounded-lg border border-gray-600/50 bg-gray-900/40 p-4 space-y-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Account</h3>
+                        <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                          <div>
+                            <dt className="text-gray-500">Name</dt>
+                            <dd className="text-white">{p.user?.name ?? '—'}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-gray-500">TikTok</dt>
+                            <dd className="text-white">
+                              {p.user?.tiktokUsername ? `@${p.user.tiktokUsername}` : '—'}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-gray-500">M-Pesa</dt>
+                            <dd className="text-white font-mono text-xs">{p.user?.mpesaMobile ?? '—'}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-gray-500">WhatsApp</dt>
+                            <dd className="text-white font-mono text-xs">{p.user?.whatsappNumber ?? '—'}</dd>
+                          </div>
+                        </dl>
+                      </div>
+
+                      <div className="rounded-lg border border-gray-600/50 bg-gray-900/40 p-4 space-y-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Payment</h3>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`px-3 py-1 rounded-full text-xs font-semibold border ${getStatusBadge(p.status || '')}`}
+                          >
+                            {p.status}
+                          </span>
+                          <span className="text-white font-semibold">{formatAmountForRole(Number(p.amount ?? 0))}</span>
+                        </div>
+                        <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                          <div className="sm:col-span-2">
+                            <dt className="text-gray-500">Payment ID</dt>
+                            <dd className="text-gray-300 font-mono text-xs break-all">{p.id}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-gray-500">Created</dt>
+                            <dd className="text-gray-300">{p.createdAt ? formatDate(p.createdAt) : '—'}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-gray-500">Completed</dt>
+                            <dd className="text-gray-300">{p.completedAt ? formatDate(p.completedAt) : '—'}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-gray-500">OBS alert sent</dt>
+                            <dd className="text-gray-300">
+                              {p.subscriberAlertEmittedAt ? formatDate(p.subscriberAlertEmittedAt) : '—'}
+                            </dd>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <dt className="text-gray-500">Transaction / reference</dt>
+                            <dd className="text-gray-300 font-mono text-xs break-all">
+                              {p.transactionId || p.reference || '—'}
+                            </dd>
+                          </div>
+                          {p.checkoutRequestId ? (
+                            <div className="sm:col-span-2">
+                              <dt className="text-gray-500">Checkout request ID</dt>
+                              <dd className="text-gray-300 font-mono text-xs break-all">{p.checkoutRequestId}</dd>
+                            </div>
+                          ) : null}
+                          {p.failureReason ? (
+                            <div className="sm:col-span-2">
+                              <dt className="text-gray-500">Failure reason</dt>
+                              <dd className="text-red-300 text-xs whitespace-pre-wrap break-words">{p.failureReason}</dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-700">
+                        {p.status?.toLowerCase() === 'completed' && (
+                          <button
+                            type="button"
+                            disabled={replayingPaymentId === p.id}
+                            onClick={() => void replayPaymentObsAlert(p.id)}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-purple-500/40 bg-purple-500/15 text-sm font-semibold text-purple-200 hover:bg-purple-500/25 disabled:opacity-40"
+                          >
+                            {replayingPaymentId === p.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin shrink-0" aria-hidden />
+                            ) : (
+                              <RotateCcw className="w-4 h-4 shrink-0" aria-hidden />
+                            )}
+                            Replay OBS alert
+                          </button>
+                        )}
+                        {p.status?.toLowerCase() === 'pending' && isAdminOrSuper() && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleEditPayment(p)
+                              closeTierPurchaseDetail()
+                            }}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-sm font-semibold text-white"
+                          >
+                            Edit pending payment
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={closeTierPurchaseDetail}
+                          className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-sm font-semibold text-white"
+                        >
+                          Close
+                        </button>
+                      </div>
+                    </>
+                  )
+                })()
+              )}
             </div>
           </div>
         </div>

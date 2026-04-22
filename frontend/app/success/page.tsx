@@ -13,47 +13,100 @@ function SuccessContent() {
   const paymentId = searchParams.get('paymentId')
   const [subscription, setSubscription] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  const searchKey = searchParams.toString()
 
   useEffect(() => {
-    if (paymentId) {
-      fetchSubscriptionDetails()
-    } else {
-      setLoading(false)
-    }
+    let cancelled = false
+    const pid = searchParams.get('paymentId')
+    const paypalReturn = searchParams.get('paypal_return')
+    const paypalOrderId = searchParams.get('token')
 
-    Swal.fire({
-      icon: 'success',
-      title: 'Payment Successful! 🎉',
-      text: 'Your subscription has been activated successfully',
-      confirmButtonColor: '#10b981',
-      confirmButtonText: 'Great!',
-      timer: 3000,
-      timerProgressBar: true,
-    })
-  }, [paymentId])
-
-  const fetchSubscriptionDetails = async () => {
-    if (!paymentId) return
-    try {
-      // Status route runs completion + OBS catch-up when payment is already COMPLETED (e.g. webhook won the race).
-      await api.get(`/payments/${paymentId}/status`)
-      const paymentRes = await api.get(`/payments/${paymentId}`)
-      const payment = paymentRes.data
-      if (payment.user?.id) {
-        const subRes = await api.get(`/subscriptions/user/${payment.user.id}/active`)
-        setSubscription(subRes.data)
+    ;(async () => {
+      setLoadError(null)
+      if (!pid) {
+        setLoading(false)
+        return
       }
-    } catch (error) {
-      console.error('Error fetching subscription:', error)
-    } finally {
-      setLoading(false)
+      try {
+        if (paypalReturn === '1' && paypalOrderId) {
+          await api.post('/payments/paypal/capture', { orderId: paypalOrderId })
+        }
+        await api.get(`/payments/${pid}/status`)
+        const paymentRes = await api.get(`/payments/${pid}`)
+        const payment = paymentRes.data
+        if (!cancelled && payment.user?.id) {
+          const subRes = await api.get(`/subscriptions/user/${payment.user.id}/active`)
+          setSubscription(subRes.data)
+        }
+        if (!cancelled) {
+          await Swal.fire({
+            icon: 'success',
+            title: 'Payment completed',
+            text: 'Your subscription is now active.',
+            confirmButtonColor: '#10b981',
+            confirmButtonText: 'Great!',
+            timer: 3000,
+            timerProgressBar: true,
+          })
+        }
+      } catch (error) {
+        console.error('Error completing payment or fetching subscription:', error)
+        const msg =
+          (error as { response?: { data?: { message?: string } } })?.response?.data
+            ?.message || 'Something went wrong loading your subscription.'
+        if (!cancelled) {
+          setLoadError(msg)
+          await Swal.fire({
+            icon: 'error',
+            title: 'Could not confirm payment',
+            text: msg,
+            confirmButtonColor: '#dc2626',
+          })
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
     }
-  }
+  }, [searchKey])
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center">
         <div className="text-white">Loading...</div>
+      </div>
+    )
+  }
+
+  if (loadError && paymentId) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
+        <SiteNav />
+        <div className="container mx-auto max-w-7xl px-4 py-10 sm:py-14 md:py-16 pb-[max(2rem,env(safe-area-inset-bottom))]">
+          <div className="max-w-2xl mx-auto w-full min-w-0 text-center">
+            <h1 className="text-2xl font-bold text-white mb-3">Payment status unclear</h1>
+            <p className="text-gray-300 mb-8">{loadError}</p>
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
+              <Link
+                href="/support"
+                className="min-h-[44px] flex items-center justify-center bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition"
+              >
+                Back to support
+              </Link>
+              <Link
+                href="/"
+                className="min-h-[44px] flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition"
+              >
+                Home
+              </Link>
+            </div>
+          </div>
+        </div>
       </div>
     )
   }
@@ -73,10 +126,10 @@ function SuccessContent() {
           {/* Success Message */}
           <div className="text-center mb-8 sm:mb-12">
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white mb-3 sm:mb-4 text-balance px-1">
-              Payment Successful! 🎉
+              Payment completed
             </h1>
             <p className="text-base sm:text-lg md:text-xl text-gray-300 px-1">
-              Your subscription has been activated successfully
+              Your subscription is active. Check WhatsApp for the group link if it has not arrived yet.
             </p>
           </div>
 
@@ -137,7 +190,7 @@ function SuccessContent() {
             <ul className="space-y-2 text-gray-300">
               <li>✅ Your subscription is now active</li>
               <li>📱 Check your WhatsApp for the group invite link</li>
-              <li>🎮 Start enjoying exclusive eFootball content</li>
+              <li>🎮 Member streams and eFootball content</li>
               <li>💬 Join our community discussions</li>
             </ul>
           </div> */}
@@ -151,10 +204,10 @@ function SuccessContent() {
               Back to Home
             </Link>
             <Link
-              href="/subscribe"
+              href="/support"
               className="flex-1 min-h-[44px] flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg text-center transition"
             >
-              Subscribe Again
+              More options
             </Link>
           </div>
         </div>

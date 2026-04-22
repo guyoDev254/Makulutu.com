@@ -50,9 +50,11 @@ export function DashboardCharts({
   const payDelta = pctChange(prev7.payments, last7.payments)
   const subDelta = pctChange(prev7.subs, last7.subs)
 
-  const maxRev = Math.max(1, ...series.map((p) => p.revenueKes))
-  const maxPay = Math.max(1, ...series.map((p) => p.completedPayments))
-  const maxSub = Math.max(1, ...series.map((p) => p.newSubscriptions))
+  const hasSeries = series.length > 0
+  const maxRev = hasSeries ? Math.max(1, ...series.map((p) => p.revenueKes)) : 1
+  const maxPay = hasSeries ? Math.max(1, ...series.map((p) => p.completedPayments)) : 1
+  const maxSub = hasSeries ? Math.max(1, ...series.map((p) => p.newSubscriptions)) : 1
+  const peakRevenueKes = hasSeries ? Math.max(...series.map((p) => p.revenueKes)) : 0
   const chartH = 112
   const gap = 4
   const n = series.length
@@ -85,17 +87,17 @@ export function DashboardCharts({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-gray-800/50 rounded-xl p-6 border border-gray-700/50">
-          <h3 className="text-lg font-semibold text-white mb-1">
+    <div className="space-y-6" role="region" aria-label="Dashboard trends">
+      <div className="grid lg:grid-cols-3 gap-4 sm:gap-6">
+        <div className="lg:col-span-2 rounded-2xl bg-slate-900/45 p-5 sm:p-6 border border-slate-700/70 shadow-lg shadow-black/10">
+          <h3 className="text-base font-semibold text-white mb-0.5">
             Week-over-week performance
           </h3>
-          <p className="text-xs text-gray-500 mb-4">
+          <p className="text-xs text-slate-500 mb-4">
             Last 7 days compared to the 7 days before that (UTC calendar days).
           </p>
           <div className="grid sm:grid-cols-3 gap-4">
-            <div className="rounded-lg bg-gray-900/40 border border-gray-700/60 p-4">
+            <div className="rounded-xl bg-slate-950/50 border border-slate-700/60 p-4">
               <p className="text-xs text-gray-400 uppercase tracking-wide">
                 Revenue (7d)
               </p>
@@ -106,7 +108,7 @@ export function DashboardCharts({
                 <Delta v={hideNumericAmounts ? null : revDelta} />
               </p>
             </div>
-            <div className="rounded-lg bg-gray-900/40 border border-gray-700/60 p-4">
+            <div className="rounded-xl bg-slate-950/50 border border-slate-700/60 p-4">
               <p className="text-xs text-gray-400 uppercase tracking-wide">
                 Completed payments (7d)
               </p>
@@ -117,7 +119,7 @@ export function DashboardCharts({
                 <Delta v={payDelta} />
               </p>
             </div>
-            <div className="rounded-lg bg-gray-900/40 border border-gray-700/60 p-4">
+            <div className="rounded-xl bg-slate-950/50 border border-slate-700/60 p-4">
               <p className="text-xs text-gray-400 uppercase tracking-wide">
                 New subscriptions (7d)
               </p>
@@ -131,13 +133,13 @@ export function DashboardCharts({
           </div>
         </div>
 
-        <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700/50 flex flex-col">
-          <h3 className="text-lg font-semibold text-white mb-1">
+        <div className="rounded-2xl bg-slate-900/45 p-5 sm:p-6 border border-slate-700/70 shadow-lg shadow-black/10 flex flex-col">
+          <h3 className="text-base font-semibold text-white mb-0.5">
             Payment outcomes
           </h3>
-          <p className="text-xs text-gray-500 mb-4">All-time share by status</p>
+          <p className="text-xs text-slate-500 mb-4">All-time share by status</p>
           <div className="flex-1 flex flex-col justify-center gap-4 min-h-[140px]">
-            <div className="h-4 w-full rounded-full overflow-hidden flex bg-gray-900/80 border border-gray-700/50">
+            <div className="h-4 w-full rounded-full overflow-hidden flex bg-slate-950/80 border border-slate-700/50">
               {completedPct > 0 && (
                 <div
                   className="h-full bg-emerald-500/90 min-w-[2px]"
@@ -179,7 +181,7 @@ export function DashboardCharts({
                   {payments.failed}
                 </span>
               </li>
-              <li className="flex justify-between gap-2 pt-1 border-t border-gray-700/60 text-gray-400">
+              <li className="flex justify-between gap-2 pt-1 border-t border-slate-700/60 text-slate-400">
                 <span>Total</span>
                 <span className="tabular-nums">{payments.total}</span>
               </li>
@@ -188,12 +190,17 @@ export function DashboardCharts({
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700/50 overflow-x-auto">
-          <h3 className="text-lg font-semibold text-white mb-1">
+      <div className="grid lg:grid-cols-2 gap-4 sm:gap-6">
+        <div className="rounded-2xl bg-slate-900/45 p-5 sm:p-6 border border-slate-700/70 shadow-lg shadow-black/10 overflow-x-auto">
+          <h3 className="text-base font-semibold text-white mb-0.5">
             Daily revenue (14 days)
           </h3>
-          <p className="text-xs text-gray-500 mb-4">Completed payments only (KES)</p>
+          <p className="text-xs text-slate-500 mb-4">Completed payments only (KES)</p>
+          {!hasSeries ? (
+            <p className="rounded-xl border border-dashed border-slate-600/60 bg-slate-950/40 py-12 text-center text-sm text-slate-500">
+              Not enough history yet — charts will fill in as payments complete.
+            </p>
+          ) : (
           <svg
             width="100%"
             height={chartH + 28}
@@ -230,27 +237,33 @@ export function DashboardCharts({
               )
             })}
           </svg>
-          {hideNumericAmounts ? (
-            <p className="text-xs text-gray-500 mt-2">
+          )}
+          {hasSeries && hideNumericAmounts ? (
+            <p className="text-xs text-slate-500 mt-2">
               Revenue chart hidden for your role.
             </p>
-          ) : (
-            <p className="text-xs text-gray-500 mt-2">
+          ) : hasSeries && !hideNumericAmounts ? (
+            <p className="text-xs text-slate-500 mt-2">
               Peak day:{' '}
-              <span className="text-amber-200/90">
-                {formatKes(Math.max(...series.map((p) => p.revenueKes), 0))}
+              <span className="text-amber-200/90 tabular-nums">
+                {formatKes(peakRevenueKes)}
               </span>
             </p>
-          )}
+          ) : null}
         </div>
 
-        <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700/50 overflow-x-auto">
-          <h3 className="text-lg font-semibold text-white mb-1">
+        <div className="rounded-2xl bg-slate-900/45 p-5 sm:p-6 border border-slate-700/70 shadow-lg shadow-black/10 overflow-x-auto">
+          <h3 className="text-base font-semibold text-white mb-0.5">
             Activity (14 days)
           </h3>
-          <p className="text-xs text-gray-500 mb-4">
+          <p className="text-xs text-slate-500 mb-4">
             Completed payments (green) · New subscriptions (blue)
           </p>
+          {!hasSeries ? (
+            <p className="rounded-xl border border-dashed border-slate-600/60 bg-slate-950/40 py-12 text-center text-sm text-slate-500">
+              No daily activity yet for this range.
+            </p>
+          ) : (
           <svg
             width="100%"
             height={chartH + 28}
@@ -294,6 +307,7 @@ export function DashboardCharts({
               )
             })}
           </svg>
+          )}
         </div>
       </div>
     </div>

@@ -1,15 +1,22 @@
 import type { Metadata, Viewport } from 'next'
-import { Inter } from 'next/font/google'
+import { Bungee, Inter } from 'next/font/google'
 import './globals.css'
+import { SITE_DESCRIPTION, SITE_NAME } from '@/lib/site-brand'
 
 const inter = Inter({ subsets: ['latin'] })
 
+const bungee = Bungee({
+  weight: '400',
+  subsets: ['latin'],
+  variable: '--font-bungee',
+})
+
 export const metadata: Metadata = {
-  title: 'MohaGamer - eFootball Streamer',
-  description: 'Subscribe to access exclusive MohaGamer streaming content',
+  title: SITE_NAME,
+  description: SITE_DESCRIPTION,
   icons: {
-    icon: '/logo.png',
-    apple: '/logo.png',
+    icon: '/makulutu-logo.png',
+    apple: '/makulutu-logo.png',
   },
 }
 
@@ -26,7 +33,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={bungee.variable}>
       <body className={`${inter.className} min-h-dvh overflow-x-hidden antialiased`}>
         {children}
       </body>

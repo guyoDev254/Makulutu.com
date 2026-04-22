@@ -32,7 +32,7 @@
 ## 📁 Project Structure
 
 ```
-mohagamer254/
+makulutu/
 ├── backend/
 │   ├── src/
 │   │   ├── admin/              # Admin endpoints with search/pagination

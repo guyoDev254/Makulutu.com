@@ -25,7 +25,7 @@ docker-compose -f docker-compose.dev.yml up -d
 docker-compose exec backend yarn prisma migrate dev
 
 # Or locally (if DATABASE_URL points to Docker PostgreSQL)
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5433/mohagamer"
+export DATABASE_URL="postgresql://postgres:postgres@localhost:5433/makulutu"
 yarn prisma migrate dev
 ```
 
@@ -33,12 +33,12 @@ yarn prisma migrate dev
 
 ### Inside Docker Containers
 ```env
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/makulutu
 ```
 
 ### From Host Machine
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5433/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@localhost:5433/makulutu
 ```
 
 **Note:** Port 5433 is used on host to avoid conflict with local PostgreSQL (if running).
@@ -49,7 +49,7 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5433/mohagamer
 - PostgreSQL service name: `postgres`
 - Internal port: `5432`
 - Host port: `5433` (configurable via `POSTGRES_PORT`)
-- Database: `mohagamer`
+- Database: `makulutu`
 - User: `postgres`
 - Password: `postgres`
 
@@ -62,10 +62,10 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5433/mohagamer
 ### From Host
 ```bash
 # Connect using psql
-psql -h localhost -p 5433 -U postgres -d mohagamer
+psql -h localhost -p 5433 -U postgres -d makulutu
 
 # Or using Docker
-docker-compose exec postgres psql -U postgres -d mohagamer
+docker-compose exec postgres psql -U postgres -d makulutu
 ```
 
 ### From Backend Container
@@ -125,10 +125,10 @@ Update your `.env` file:
 
 ```env
 # For local development (connecting to Docker PostgreSQL)
-DATABASE_URL=postgresql://postgres:postgres@localhost:5433/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@localhost:5433/makulutu
 
 # For Docker containers (internal network)
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/makulutu
 ```
 
 ---

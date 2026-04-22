@@ -14,13 +14,13 @@ Tag and push with explicit `docker.io` registry:
 cd backend
 
 # 1. Tag with explicit docker.io registry
-docker tag backend-backend:latest docker.io/guyoDev254/mohagamer-backend:latest
+docker tag backend-backend:latest docker.io/guyoDev254/makulutu-backend:latest
 
 # 2. Login to Docker Hub
 docker login docker.io
 
 # 3. Push
-docker push docker.io/guyoDev254/mohagamer-backend:latest
+docker push docker.io/guyoDev254/makulutu-backend:latest
 ```
 
 ### Or Use the Fixed Script
@@ -46,20 +46,20 @@ docker login docker.io
 ## 📋 Correct Image Name Format
 
 **Correct:**
-- `docker.io/guyoDev254/mohagamer-backend:latest`
-- `guyoDev254/mohagamer-backend:latest` (defaults to docker.io)
+- `docker.io/guyoDev254/makulutu-backend:latest`
+- `guyoDev254/makulutu-backend:latest` (defaults to docker.io)
 
 **Incorrect:**
-- `guyoDev254/v2/mohagamer-backend:latest` (Docker is adding /v2/)
+- `guyoDev254/v2/makulutu-backend:latest` (Docker is adding /v2/)
 
 ## ✅ After Successful Push
 
 **View on Docker Hub:**
-- https://hub.docker.com/r/guyoDev254/mohagamer-backend
+- https://hub.docker.com/r/guyoDev254/makulutu-backend
 
 **Pull the image:**
 ```bash
-docker pull guyoDev254/mohagamer-backend:latest
+docker pull guyoDev254/makulutu-backend:latest
 ```
 
 ---

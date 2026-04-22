@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Docker helper script for mohagamer backend
+# Docker helper script for makulutu backend
 
 set -e
 
@@ -9,12 +9,12 @@ COMMAND=${1:-help}
 case $COMMAND in
   build)
     echo "🔨 Building production image..."
-    docker build -t mohagamer-backend:latest .
+    docker build -t makulutu-backend:latest .
     ;;
   
   build-dev)
     echo "🔨 Building development image..."
-    docker build -f Dockerfile.dev -t mohagamer-backend:dev .
+    docker build -f Dockerfile.dev -t makulutu-backend:dev .
     ;;
   
   up)
@@ -114,7 +114,7 @@ case $COMMAND in
     ;;
   
   help|*)
-    echo "🐳 Docker Helper Script for Mohagamer Backend"
+    echo "🐳 Docker Helper Script for Makulutu Backend"
     echo ""
     echo "Usage: ./docker.sh [command]"
     echo ""

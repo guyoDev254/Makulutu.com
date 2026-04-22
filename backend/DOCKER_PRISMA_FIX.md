@@ -12,10 +12,10 @@
 cd backend
 
 # Clean previous build
-docker rmi guyoDev254/mohagamer-backend:latest 2>/dev/null || true
+docker rmi guyoDev254/makulutu-backend:latest 2>/dev/null || true
 
 # Rebuild for AMD64
-docker build --platform linux/amd64 -t guyoDev254/mohagamer-backend:latest -f Dockerfile .
+docker build --platform linux/amd64 -t guyoDev254/makulutu-backend:latest -f Dockerfile .
 ```
 
 ## 📋 What Changed
@@ -33,10 +33,10 @@ docker build --platform linux/amd64 -t guyoDev254/mohagamer-backend:latest -f Do
 After successful build:
 ```bash
 # Check image
-docker images | grep mohagamer-backend
+docker images | grep makulutu-backend
 
 # Test run (optional)
-docker run --rm guyoDev254/mohagamer-backend:latest node -e "console.log('OK')"
+docker run --rm guyoDev254/makulutu-backend:latest node -e "console.log('OK')"
 ```
 
 ---

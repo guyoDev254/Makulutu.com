@@ -4,9 +4,12 @@ import {
   Post,
   Body,
   Param,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
+import { PaypalCaptureDto } from './dto/paypal-capture.dto';
 
 @Controller('payments')
 export class PaymentController {
@@ -15,6 +18,17 @@ export class PaymentController {
   @Post()
   create(@Body() createPaymentDto: CreatePaymentDto) {
     return this.paymentService.create(createPaymentDto);
+  }
+
+  /** Complete PayPal Checkout after the buyer returns with token = order ID. */
+  @Post('paypal/capture')
+  @HttpCode(HttpStatus.OK)
+  async capturePaypal(@Body() body: PaypalCaptureDto) {
+    const payment = await this.paymentService.capturePayPalOrder(body.orderId);
+    return {
+      ...payment,
+      status: payment.status?.toLowerCase(),
+    };
   }
 
   @Get()

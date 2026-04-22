@@ -4,9 +4,9 @@
 
 set -e
 
-IMAGE_NAME=${1:-mohagamer-backend}
+IMAGE_NAME=${1:-makulutu-backend}
 TAG=${2:-latest}
-# Optional: Docker Hub repo for push (e.g. guyo254/mohagamer-backend)
+# Optional: Docker Hub repo for push (e.g. guyo254/makulutu-backend)
 PUSH_REPO=${3:-}
 
 echo "🐳 Building Docker image for linux/amd64 and linux/arm64..."
@@ -35,10 +35,10 @@ else
   echo ""
   echo "✅ Built ${IMAGE_NAME}:${TAG}-amd64 and ${IMAGE_NAME}:${TAG}-arm64"
   echo "To build and push a single multi-platform image to Docker Hub:"
-  echo "  ./build-multi.sh ${IMAGE_NAME} ${TAG} guyo254/mohagamer-backend"
+  echo "  ./build-multi.sh ${IMAGE_NAME} ${TAG} guyo254/makulutu-backend"
 fi
 
 echo ""
 echo "To build and push both architectures to Docker Hub:"
-echo "  ./build-multi.sh ${IMAGE_NAME} ${TAG} guyo254/mohagamer-backend"
+echo "  ./build-multi.sh ${IMAGE_NAME} ${TAG} guyo254/makulutu-backend"
 echo ""

@@ -1,5 +1,6 @@
 import Image from 'next/image'
 import Link from 'next/link'
+import { SITE_BRAND_ALT, SITE_NAME, SITE_NAME_CLASS } from '@/lib/site-brand'
 
 export type PlatformBrandProps = {
   /** Use `null` for a non-clickable brand row */
@@ -20,22 +21,22 @@ export function PlatformBrand({
 }: PlatformBrandProps) {
   const imgWrapCls =
     variant === 'nav'
-      ? 'h-12 w-12 sm:h-14 sm:w-14 shrink-0 rounded-full bg-white p-1 shadow-lg shadow-black/50 ring-2 ring-white/50'
-      : 'h-14 w-14 sm:h-16 sm:w-16 shrink-0 rounded-full bg-white p-1 shadow-lg shadow-black/50 ring-2 ring-white/40'
+      ? 'h-16 w-16 sm:h-20 sm:w-20 md:h-[5.25rem] md:w-[5.25rem] shrink-0 overflow-hidden rounded-full bg-transparent p-0'
+      : 'h-20 w-20 sm:h-24 sm:w-24 shrink-0 overflow-hidden rounded-full bg-transparent p-0'
 
-  const imgClass = 'h-full w-full rounded-full object-cover'
+  const imgClass = 'h-full w-full object-contain'
 
   const titleCls =
     variant === 'nav'
-      ? 'text-2xl sm:text-3xl font-bold text-white truncate group-hover:text-violet-100 transition-colors leading-tight'
-      : 'text-xl sm:text-2xl font-bold text-white leading-tight'
+      ? `${SITE_NAME_CLASS} text-2xl sm:text-3xl text-white truncate group-hover:text-violet-100 transition-colors leading-tight`
+      : `${SITE_NAME_CLASS} text-xl sm:text-2xl text-white leading-tight`
 
   const body = (
     <>
       <span className={imgWrapCls}>
         <Image
-          src="/logo.png"
-          alt="MohaGamer"
+          src="/makulutu-logo.png"
+          alt={SITE_BRAND_ALT}
           width={256}
           height={256}
           className={imgClass}
@@ -43,7 +44,7 @@ export function PlatformBrand({
         />
       </span>
       <div className={`min-w-0 ${variant === 'footer' ? 'text-center sm:text-left' : ''}`}>
-        <span className={`block ${titleCls}`}>MohaGamer</span>
+        <span className={`block ${titleCls}`}>{SITE_NAME}</span>
         {description ? (
           <span className="mt-1.5 block text-sm text-gray-400 max-w-md">{description}</span>
         ) : null}

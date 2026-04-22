@@ -1,4 +1,10 @@
-import { IsString, IsNotEmpty, Matches } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  Matches,
+  IsOptional,
+  IsUUID,
+} from 'class-validator';
 
 export class CreateUserDto {
   @IsString()
@@ -22,4 +28,8 @@ export class CreateUserDto {
     message: 'WhatsApp number must be in format 254XXXXXXXXX or 0XXXXXXXXX',
   })
   whatsappNumber: string;
+
+  @IsOptional()
+  @IsUUID()
+  creatorId?: string;
 }

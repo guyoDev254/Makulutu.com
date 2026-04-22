@@ -1,6 +1,8 @@
-# Gamer Portfolio Website - eFootball Streamer
+# Makulutu
 
-A full-stack portfolio website for a gamer streamer with subscription management and M-Pesa payment integration via MegaPay.
+A full-stack creator platform (subscriptions, shoutouts, M-Pesa checkout, creator workspaces, and admin tools). The repo folders may still use a legacy name; the product name is **Makulutu**.
+
+If you already deployed with an older database name or platform slug, point `DATABASE_URL` at your existing DB and set `PLATFORM_CREATOR_SLUG` / `ADMIN_USERNAME` to match your data instead of migrating blindly.
 
 ## Features
 

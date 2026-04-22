@@ -16,6 +16,15 @@ import {
   isFetchNetworkError,
 } from '@/lib/api-origin'
 import { coachingBookingApi, subscriptionApi } from '@/lib/api'
+import { SITE_NAME, SITE_NAME_CLASS } from '@/lib/site-brand'
+
+function escapeHtml(text: string) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 const bookingSchema = z
   .object({
@@ -49,6 +58,13 @@ const bookingSchema = z
   })
 
 type BookingForm = z.infer<typeof bookingSchema>
+type PublicCreator = {
+  slug: string
+  displayName: string
+  bio: string | null
+  avatarUrl: string | null
+  primaryCategory: string | null
+}
 
 function pollBookingPaymentStatus(paymentId: string, accountUsername: string) {
   const maxAttempts = 30
@@ -66,7 +82,9 @@ function pollBookingPaymentStatus(paymentId: string, accountUsername: string) {
         await Swal.fire({
           icon: 'success',
           title: 'Booking confirmed',
-          html: `<p class="text-sm">Payment received. MohaGamer will contact you using the details you provided.</p><p class="text-sm text-gray-600 mt-3">Game account for review: <strong>${safeAcct}</strong></p>`,
+          html: `<p class="text-sm">Payment received. <span style="font-family: var(--font-bungee), cursive, sans-serif">${escapeHtml(
+            SITE_NAME,
+          )}</span> will route this to the creator, who will contact you using the details you provided.</p><p class="text-sm text-gray-600 mt-3">Game account for review: <strong>${safeAcct}</strong></p>`,
           confirmButtonColor: '#7c3aed',
         })
       } else if (status === 'failed' || status === 'FAILED') {
@@ -94,11 +112,59 @@ function pollBookingPaymentStatus(paymentId: string, accountUsername: string) {
 
 export default function BookPage() {
   const [accountReviewKes, setAccountReviewKes] = useState(100)
+  const [creatorSlug, setCreatorSlug] = useState<string | undefined>(undefined)
+  const [creatorProfile, setCreatorProfile] = useState<PublicCreator | null>(null)
+  const [creatorScopeLoading, setCreatorScopeLoading] = useState(false)
+  const [creatorScopeError, setCreatorScopeError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const qsSlug = new URLSearchParams(window.location.search).get('creatorSlug')
+    const normalized = qsSlug?.trim().toLowerCase()
+    if (normalized && /^[a-z0-9-]{3,64}$/.test(normalized)) {
+      setCreatorSlug(normalized)
+      return
+    }
+    setCreatorSlug(undefined)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!creatorSlug) {
+      setCreatorProfile(null)
+      setCreatorScopeError(null)
+      setCreatorScopeLoading(false)
+      return
+    }
+    setCreatorScopeLoading(true)
+    setCreatorScopeError(null)
+    void fetch(`${API_BASE_URL}/creator-auth/public/${encodeURIComponent(creatorSlug)}`, {
+      cache: 'no-store',
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error('Creator page not found or unavailable')
+        }
+        const data = (await res.json()) as PublicCreator
+        if (!cancelled) setCreatorProfile(data)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setCreatorProfile(null)
+        setCreatorScopeError(err instanceof Error ? err.message : 'Creator unavailable')
+      })
+      .finally(() => {
+        if (!cancelled) setCreatorScopeLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [creatorSlug])
 
   useEffect(() => {
     let cancelled = false
     void coachingBookingApi
-      .getPricing()
+      .getPricing(creatorSlug)
       .then((r) => {
         if (cancelled) return
         const n = Number(r.accountReviewKes)
@@ -108,7 +174,7 @@ export default function BookPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [creatorSlug])
 
   const {
     register,
@@ -129,8 +195,18 @@ export default function BookPage() {
 
   const service = watch('service')
   const needsPay = service === 'account_review' || service === 'both'
+  const creatorScopeBlocked = !!creatorSlug && !!creatorScopeError
 
   const onSubmit = async (data: BookingForm) => {
+    if (creatorScopeBlocked) {
+      await Swal.fire({
+        icon: 'error',
+        title: 'Creator unavailable',
+        text: 'This creator booking page is unavailable right now. Please verify the link and try again.',
+        confirmButtonColor: '#7c3aed',
+      })
+      return
+    }
     const paid = data.service === 'account_review' || data.service === 'both'
 
     if (paid) {
@@ -143,6 +219,7 @@ export default function BookPage() {
           contact: data.contact.trim(),
           mpesaMobile: mpesa,
           accountUsername: acct,
+          ...(creatorSlug ? { creatorSlug } : {}),
           ...(data.availability?.trim()
             ? { availability: data.availability.trim() }
             : {}),
@@ -191,6 +268,7 @@ export default function BookPage() {
       service: data.service,
       name: data.name.trim(),
       contact: data.contact.trim(),
+      ...(creatorSlug ? { creatorSlug } : {}),
       ...(data.availability?.trim()
         ? { availability: data.availability.trim() }
         : {}),
@@ -223,7 +301,7 @@ export default function BookPage() {
     await Swal.fire({
       icon: 'success',
       title: 'Request received',
-      html: `<p class="text-sm">Thank you! MohaGamer will contact you <strong>immediately</strong> using the contact details you provided.</p><p class="text-sm text-gray-600 mt-3">Keep an eye on your messages—we have your request on file.</p>`,
+      html: `<p class="text-sm">Thank you. The creator (or their team) will contact you using the details you provided.</p><p class="text-sm text-gray-600 mt-3">If you do not hear back within a reasonable time, send a follow-up on the same channel.</p>`,
       confirmButtonColor: '#7c3aed',
     })
     reset({
@@ -259,9 +337,27 @@ export default function BookPage() {
               Account review &amp; rank push
             </h1>
             <p className="mt-4 text-gray-400 text-pretty sm:text-lg">
-              onStream help for your eFootball account. Submit your details below and MohaGamer will reach
-              out to you right away.
+              Submit the form for account review or rank push. The creator you book with will follow up using the contact
+              details you provide.
             </p>
+            {creatorSlug && (
+              <div className="mt-5 rounded-xl border border-violet-500/25 bg-violet-500/10 px-4 py-3 text-left">
+                {creatorScopeLoading ? (
+                  <p className="text-sm text-violet-200/90">Loading creator profile…</p>
+                ) : creatorProfile ? (
+                  <p className="text-sm text-violet-100">
+                    Booking with <strong>{creatorProfile.displayName}</strong>
+                    {creatorProfile.primaryCategory
+                      ? ` · ${creatorProfile.primaryCategory}`
+                      : ''}
+                  </p>
+                ) : (
+                  <p className="text-sm text-rose-300">
+                    {creatorScopeError || 'Creator page not found or unavailable.'}
+                  </p>
+                )}
+              </div>
+            )}
           </header>
 
           <div className="mb-10 grid gap-4 sm:grid-cols-2">
@@ -345,7 +441,7 @@ export default function BookPage() {
                   type="text"
                   autoComplete="name"
                   className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/40"
-                  placeholder="How should Moha address you?"
+                  placeholder="How should the creator address you?"
                   {...register('name')}
                 />
                 {errors.name && (
@@ -457,14 +553,19 @@ export default function BookPage() {
             </div>
 
             <p className="mt-6 text-xs text-gray-500">
-              {needsPay
-                ? 'After M-Pesa succeeds, your booking is saved and MohaGamer is notified on stream.'
-                : 'Your request is saved securely. MohaGamer will contact you using the contact information you enter above.'}
+              {needsPay ? (
+                <>
+                  After M-Pesa succeeds, your booking is saved and the creator is notified (
+                  <span className={SITE_NAME_CLASS}>{SITE_NAME}</span> + OBS alerts where configured).
+                </>
+              ) : (
+                'Your request is saved securely. The creator will contact you using the contact information you enter above.'
+              )}
             </p>
 
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || creatorScopeBlocked}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 py-3.5 text-base font-semibold text-white shadow-lg transition hover:from-emerald-500 hover:to-teal-500 disabled:opacity-60 sm:w-auto sm:min-w-[200px] sm:px-10"
             >
               {isSubmitting ? (

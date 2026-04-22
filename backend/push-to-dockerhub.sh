@@ -6,7 +6,7 @@ set -e
 
 # Configuration - UPDATE THESE
 DOCKERHUB_USERNAME=${1:-guyoDev254}
-IMAGE_NAME=${2:-mohagamer-backend}
+IMAGE_NAME=${2:-makulutu-backend}
 TAG=${3:-latest}
 
 FULL_IMAGE_NAME="${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${TAG}"

@@ -16,4 +16,8 @@ export class CreatePaymentDto {
   @IsOptional()
   @IsString()
   reference?: string;
+
+  @IsOptional()
+  @IsUUID()
+  creatorId?: string;
 }

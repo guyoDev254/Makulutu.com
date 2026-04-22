@@ -5,7 +5,7 @@
 set -e
 
 DOCKERHUB_USERNAME=${1:-guyo254}
-IMAGE_NAME=${2:-mohagamer-backend}
+IMAGE_NAME=${2:-makulutu-backend}
 TAG=${3:-latest}
 
 # Convert to lowercase (Docker Hub requirement)

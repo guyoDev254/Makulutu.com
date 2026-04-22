@@ -80,7 +80,7 @@ docker-compose down
 Create `.env` file in backend directory with:
 
 ```env
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mohagamer
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/makulutu
 JWT_SECRET=your-secret-key
 FRONTEND_URL=http://localhost:3000
 # ... other variables
