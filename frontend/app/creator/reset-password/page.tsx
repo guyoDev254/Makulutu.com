@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { FormEvent, useState } from 'react'
+import { FormEvent, Suspense, useState } from 'react'
 import { Loader2, Lock, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { creatorAuthApi } from '@/lib/creator-auth'
 import {
@@ -12,7 +12,7 @@ import {
   authSubmitClass,
 } from '@/components/auth/AuthLoginShell'
 
-export default function CreatorResetPasswordPage() {
+function CreatorResetPasswordPageInner() {
   const params = useSearchParams()
   const token = params.get('token') || ''
   const [password, setPassword] = useState('')
@@ -146,5 +146,21 @@ export default function CreatorResetPasswordPage() {
         </form>
       )}
     </AuthLoginShell>
+  )
+}
+
+function CreatorResetPasswordPageFallback() {
+  return (
+    <AuthLoginShell title="Set a new password" subtitle="Loading…">
+      <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
+    </AuthLoginShell>
+  )
+}
+
+export default function CreatorResetPasswordPage() {
+  return (
+    <Suspense fallback={<CreatorResetPasswordPageFallback />}>
+      <CreatorResetPasswordPageInner />
+    </Suspense>
   )
 }

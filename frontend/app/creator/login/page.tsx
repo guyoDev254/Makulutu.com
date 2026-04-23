@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, Suspense, useEffect, useState } from 'react'
 import { Lock, User, Loader2, AlertCircle } from 'lucide-react'
 import { creatorAuthApi, setCreatorSession } from '@/lib/creator-auth'
 import {
@@ -12,7 +12,7 @@ import {
   authSubmitClass,
 } from '@/components/auth/AuthLoginShell'
 
-export default function CreatorLoginPage() {
+function CreatorLoginPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(false)
@@ -144,5 +144,21 @@ export default function CreatorLoginPage() {
         </button>
       </form>
     </AuthLoginShell>
+  )
+}
+
+function CreatorLoginPageFallback() {
+  return (
+    <AuthLoginShell title="Creator sign in" subtitle="Loading…">
+      <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
+    </AuthLoginShell>
+  )
+}
+
+export default function CreatorLoginPage() {
+  return (
+    <Suspense fallback={<CreatorLoginPageFallback />}>
+      <CreatorLoginPageInner />
+    </Suspense>
   )
 }

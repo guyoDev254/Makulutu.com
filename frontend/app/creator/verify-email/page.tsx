@@ -2,12 +2,12 @@
 
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
 import { creatorAuthApi } from '@/lib/creator-auth'
 import { AuthLoginShell } from '@/components/auth/AuthLoginShell'
 
-export default function VerifyEmailPage() {
+function VerifyEmailPageInner() {
   const params = useSearchParams()
   const token = params.get('token') || ''
   const [state, setState] = useState<'loading' | 'ok' | 'error'>('loading')
@@ -79,5 +79,21 @@ export default function VerifyEmailPage() {
         )}
       </div>
     </AuthLoginShell>
+  )
+}
+
+function VerifyEmailPageFallback() {
+  return (
+    <AuthLoginShell title="Email verification" subtitle="Loading…">
+      <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
+    </AuthLoginShell>
+  )
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={<VerifyEmailPageFallback />}>
+      <VerifyEmailPageInner />
+    </Suspense>
   )
 }
