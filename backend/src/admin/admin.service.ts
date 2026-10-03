@@ -1,11 +1,15 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { normalizeKenyaMsisdn } from '../common/utils/mpesa-msisdn';
 import { UserService } from '../user/user.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { PaymentService } from '../payment/payment.service';
@@ -53,6 +57,7 @@ import {
   enumerateNairobiDays,
   nairobiRangeToUtcBounds,
   nairobiYmd,
+  previousInclusiveRange,
   resolveRevenueRangeNairobi,
   type RevenuePreset,
 } from '../common/utils/admin-revenue-range';
@@ -84,12 +89,28 @@ import {
   nextWeeklyPayoutReminderDate,
   payoutProcessingScheduleMeta,
 } from '../common/utils/payout-weekly-schedule';
+import { FinanceService } from '../finance/finance.service';
+import { StorageService } from '../storage/storage.service';
+import { PayoutNotifyService } from './payout-notify.service';
+import { FanNotifyService } from '../fan-portal/fan-notify.service';
+import {
+  hasRequiredStreamingChannel,
+  parseSocialLinksJson,
+  streamVerificationStatus,
+} from '../common/utils/streaming-channel-urls';
+import { extractKenyaMsisdn } from '../common/utils/mpesa-msisdn';
+import { toCsv } from '../common/utils/csv-escape';
+import {
+  PLATFORM_FEE_PERCENT_KEY,
+  SETTLEMENT_PERIOD_HOURS_KEY,
+  MIN_WITHDRAWAL_KES_KEY,
+  WITHDRAWAL_FEE_KES_KEY,
+  DEFAULT_PLATFORM_FEE_PERCENT,
+} from '../finance/finance-config';
+import { centsToKesNumber } from '../finance/kes-money';
 
-const PLATFORM_FEE_PERCENT_KEY = 'platform_fee_percent';
 const OBS_SUBSCRIPTION_MESSAGE_TEMPLATE_KEY = 'obs_subscription_message_template';
 const OBS_SHOUTOUT_MESSAGE_TEMPLATE_KEY = 'obs_shoutout_message_template';
-const DEFAULT_PLATFORM_FEE_PERCENT = 5;
-const MIN_PAYOUT_REQUEST_KES = 100;
 
 @Injectable()
 export class AdminService {
@@ -106,7 +127,42 @@ export class AdminService {
     private obsGroq: ObsGroqService,
     private config: ConfigService,
     private outboundMail: OutboundMailService,
+    private payoutNotify: PayoutNotifyService,
+    private fanNotify: FanNotifyService,
+    private finance: FinanceService,
+    private storage: StorageService,
   ) {}
+
+  private static readonly OBS_NEEDS_STREAM_VERIFY =
+    'Your TikTok or YouTube channel is not verified yet. Submit the links on your profile and wait for an admin email before generating OBS links.';
+
+  async ensureCreatorCanUseObs(creatorId: string): Promise<void> {
+    const row = await this.prisma.creator.findUnique({
+      where: { id: creatorId },
+      select: { streamVerifiedAt: true },
+    });
+    if (!row?.streamVerifiedAt) {
+      throw new ForbiddenException(AdminService.OBS_NEEDS_STREAM_VERIFY);
+    }
+  }
+
+  private mapCreatorAdminRow<
+    T extends {
+      socialLinks?: string | null;
+      streamVerifiedAt?: Date | null;
+      streamLinksSubmittedAt?: Date | null;
+    },
+  >(row: T) {
+    const socials = parseSocialLinksJson(row.socialLinks);
+    return {
+      ...row,
+      tiktokUrl: socials.tiktok,
+      instagramUrl: socials.instagram,
+      youtubeUrl: socials.youtube,
+      streamVerified: Boolean(row.streamVerifiedAt),
+      streamVerificationStatus: streamVerificationStatus(row),
+    };
+  }
 
   async testObsAlert(
     tiktokUsername?: string,
@@ -127,6 +183,9 @@ export class AdminService {
     creatorRewardId?: string,
     forcedCreatorId?: string,
   ) {
+    if (forcedCreatorId) {
+      await this.ensureCreatorCanUseObs(forcedCreatorId);
+    }
     const raw = (tiktokUsername ?? 'TestCreator').trim().replace(/^@+/, '');
     const name = raw.length > 0 ? raw.slice(0, 64) : 'TestCreator';
     const lang =
@@ -340,10 +399,17 @@ export class AdminService {
 
   /** Same as getObsPlayerLink but only stream links owned by this creator. */
   async getObsPlayerLinkForCreator(creatorId: string) {
+    const row = await this.prisma.creator.findUnique({
+      where: { id: creatorId },
+      select: { streamVerifiedAt: true },
+    });
+    const streamVerified = Boolean(row?.streamVerifiedAt);
     const enabled = await this.obsAlerts.isEnabled();
     if (!enabled) {
       return {
         enabled: false,
+        streamVerified,
+        streamVerifiedAt: row?.streamVerifiedAt ?? null,
         playerUrl: null as string | null,
         copyUrl: null as string | null,
         uniqueLinks: [] as Array<{
@@ -356,8 +422,9 @@ export class AdminService {
         cloudTts: this.obsTts.isConfigured(),
         groq: this.obsGroq.isConfigured(),
         gemini: this.obsGemini.isConfigured(),
-        message:
-          'OBS alerts are disabled. In production set OBS_ALERT_SECRET or create at least one unique stream link below.',
+        message: streamVerified
+          ? 'OBS alerts are disabled. In production set OBS_ALERT_SECRET or create at least one unique stream link below.'
+          : AdminService.OBS_NEEDS_STREAM_VERIFY,
       };
     }
 
@@ -384,26 +451,32 @@ export class AdminService {
     }
 
     let message: string | null = null;
-    if (!base) {
+    if (!streamVerified) {
+      message = AdminService.OBS_NEEDS_STREAM_VERIFY;
+    } else if (!base) {
       message =
         'Set OBS_PLAYER_BASE_URL (or WEBHOOK_BASE_URL / BASE_URL) on the API for a full https URL, or prepend your API host to the path.';
     }
-    if (activeLinks.length === 0) {
+    if (streamVerified && activeLinks.length === 0) {
       message =
         (message ? `${message} ` : '') +
         'Generate at least one unique OBS link for this creator. Shared OBS_ALERT_SECRET is not used in creator workspace links.';
     }
 
     return {
-      enabled: true,
-      playerUrl,
-      copyUrl,
-      uniqueLinks: activeLinks.map((l) => ({
-        id: l.id,
-        label: l.label,
-        tokenSuffix: (l.token ?? '').slice(-6),
-        createdAt: (l.createdAt ?? new Date()).toISOString(),
-      })),
+      enabled: streamVerified,
+      streamVerified,
+      streamVerifiedAt: row?.streamVerifiedAt ?? null,
+      playerUrl: streamVerified ? playerUrl : null,
+      copyUrl: streamVerified ? copyUrl : null,
+      uniqueLinks: streamVerified
+        ? activeLinks.map((l) => ({
+            id: l.id,
+            label: l.label,
+            tokenSuffix: (l.token ?? '').slice(-6),
+            createdAt: (l.createdAt ?? new Date()).toISOString(),
+          }))
+        : [],
       legacyUsesSharedSecret: false,
       cloudTts: this.obsTts.isConfigured(),
       groq: this.obsGroq.isConfigured(),
@@ -418,6 +491,9 @@ export class AdminService {
   ) {
     const label = dto?.label;
     const token = ObsAlertsService.newStreamToken();
+    if (forcedCreatorId?.trim()) {
+      await this.ensureCreatorCanUseObs(forcedCreatorId.trim());
+    }
     const creatorId =
       forcedCreatorId?.trim() ||
       (await resolveDefaultCreatorId(this.prisma)) ||
@@ -484,48 +560,113 @@ export class AdminService {
     };
   }
 
+  private completedInRangeWhere(
+    startUtc: Date,
+    endUtc: Date,
+    scopedCreatorId?: string | null,
+  ): Prisma.PaymentWhereInput {
+    const scope =
+      scopedCreatorId && scopedCreatorId.length > 0
+        ? { creatorId: scopedCreatorId }
+        : {};
+    return {
+      status: PaymentStatus.COMPLETED,
+      ...scope,
+      OR: [
+        { completedAt: { gte: startUtc, lte: endUtc } },
+        { completedAt: null, createdAt: { gte: startUtc, lte: endUtc } },
+      ],
+    };
+  }
+
   private async computeDashboardTrends(
-    dayCount: number,
+    fromYmd: string,
+    toYmd: string,
     scopedCreatorId?: string | null,
   ) {
-    const now = new Date();
-    const todayUtc = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-    );
-    const startUtc = new Date(todayUtc);
-    startUtc.setUTCDate(startUtc.getUTCDate() - (dayCount - 1));
+    const days = enumerateNairobiDays(fromYmd, toYmd);
+    if (days.length < 1) {
+      throw new BadRequestException('Invalid dashboard date range');
+    }
+    if (days.length > 93) {
+      throw new BadRequestException('Choose a range of 93 days or fewer');
+    }
 
+    const { startUtc, endUtc } = nairobiRangeToUtcBounds(fromYmd, toYmd);
     const scope =
       scopedCreatorId && scopedCreatorId.length > 0
         ? { creatorId: scopedCreatorId }
         : {};
 
-    const [paymentsAgg, subsAgg] = await Promise.all([
-      this.prisma.payment.findMany({
-        where: {
-          status: PaymentStatus.COMPLETED,
-          createdAt: { gte: startUtc },
-          ...scope,
-        },
-        select: { createdAt: true, amount: true },
-      }),
-      this.prisma.subscription.findMany({
-        where: { createdAt: { gte: startUtc }, ...scope },
-        select: { createdAt: true },
-      }),
-    ]);
+    const [paymentsAgg, subsAgg, newFans, pendingInRange, failedInRange] =
+      await Promise.all([
+        this.prisma.payment.findMany({
+          where: this.completedInRangeWhere(startUtc, endUtc, scopedCreatorId),
+          select: {
+            createdAt: true,
+            completedAt: true,
+            amount: true,
+            purpose: true,
+          },
+        }),
+        this.prisma.subscription.findMany({
+          where: { createdAt: { gte: startUtc, lte: endUtc }, ...scope },
+          select: { createdAt: true },
+        }),
+        this.prisma.user.count({
+          where: {
+            ...this.subscriberBackedUserWhere(scopedCreatorId),
+            createdAt: { gte: startUtc, lte: endUtc },
+          },
+        }),
+        this.prisma.payment.count({
+          where: {
+            status: PaymentStatus.PENDING,
+            createdAt: { gte: startUtc, lte: endUtc },
+            ...scope,
+          },
+        }),
+        this.prisma.payment.count({
+          where: {
+            status: PaymentStatus.FAILED,
+            createdAt: { gte: startUtc, lte: endUtc },
+            ...scope,
+          },
+        }),
+      ]);
 
     const payByDay = new Map<string, { count: number; revenue: number }>();
+    let subscriptionsKes = 0;
+    let shoutoutsKes = 0;
+    let coachingKes = 0;
+    let tiersKes = 0;
+    let otherKes = 0;
+    let revenueKes = 0;
+
     for (const p of paymentsAgg) {
-      const key = p.createdAt!.toISOString().slice(0, 10);
+      const when = p.completedAt ?? p.createdAt;
+      const key = when ? nairobiYmd(when) : fromYmd;
+      const amount = Number(p.amount ?? 0);
       const cur = payByDay.get(key) || { count: 0, revenue: 0 };
       cur.count += 1;
-      cur.revenue += Number(p.amount ?? 0);
+      cur.revenue += amount;
       payByDay.set(key, cur);
+      revenueKes += amount;
+      if (p.purpose === null || p.purpose === PaymentPurpose.SUBSCRIPTION) {
+        subscriptionsKes += amount;
+      } else if (p.purpose === PaymentPurpose.STREAM_ALERT) {
+        shoutoutsKes += amount;
+      } else if (p.purpose === PaymentPurpose.COACHING_BOOKING) {
+        coachingKes += amount;
+      } else if (p.purpose === PaymentPurpose.CREATOR_REWARD) {
+        tiersKes += amount;
+      } else {
+        otherKes += amount;
+      }
     }
     const subByDay = new Map<string, number>();
     for (const s of subsAgg) {
-      const key = s.createdAt!.toISOString().slice(0, 10);
+      const key = nairobiYmd(s.createdAt);
       subByDay.set(key, (subByDay.get(key) || 0) + 1);
     }
 
@@ -536,13 +677,12 @@ export class AdminService {
       revenueKes: number;
       newSubscriptions: number;
     }> = [];
-    for (let i = 0; i < dayCount; i++) {
-      const d = new Date(startUtc);
-      d.setUTCDate(startUtc.getUTCDate() + i);
-      const dateStr = d.toISOString().slice(0, 10);
-      const label = d.toLocaleDateString('en-KE', {
+    for (const dateStr of days) {
+      const noon = new Date(`${dateStr}T12:00:00.000+03:00`);
+      const label = noon.toLocaleDateString('en-KE', {
         month: 'short',
         day: 'numeric',
+        timeZone: 'Africa/Nairobi',
       });
       const p = payByDay.get(dateStr) || { count: 0, revenue: 0 };
       series.push({
@@ -554,11 +694,52 @@ export class AdminService {
       });
     }
 
-    return { days: dayCount, series };
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    return {
+      days: days.length,
+      fromYmd,
+      toYmd,
+      series,
+      completedPayments: paymentsAgg.length,
+      newSubscriptions: subsAgg.length,
+      newFans,
+      pendingPayments: pendingInRange,
+      failedPayments: failedInRange,
+      revenueKes: round2(revenueKes),
+      revenueBySource: {
+        subscriptionsKes: round2(subscriptionsKes),
+        shoutoutsKes: round2(shoutoutsKes),
+        coachingKes: round2(coachingKes),
+        tiersKes: round2(tiersKes),
+        otherKes: round2(otherKes),
+        totalKes: round2(revenueKes),
+      },
+    };
   }
 
-  async getDashboardStats(scopedCreatorId?: string | null) {
+  async getDashboardStats(
+    scopedCreatorId?: string | null,
+    query?: { preset?: string; from?: string; to?: string },
+  ) {
     try {
+      const preset = (query?.preset || 'thisWeek') as RevenuePreset;
+      let fromYmd: string;
+      let toYmd: string;
+      try {
+        const range = resolveRevenueRangeNairobi(
+          preset,
+          query?.from,
+          query?.to,
+        );
+        fromYmd = range.fromYmd;
+        toYmd = range.toYmd;
+      } catch (e) {
+        throw new BadRequestException(
+          e instanceof Error ? e.message : 'Invalid date range',
+        );
+      }
+
+      const prevRange = previousInclusiveRange(fromYmd, toYmd);
       const baseUserWhere = this.subscriberBackedUserWhere(scopedCreatorId);
       const [
         totalUsers,
@@ -566,6 +747,7 @@ export class AdminService {
         subscriptionStats,
         paymentStats,
         trends,
+        previousTrends,
         platformOps,
       ] = await Promise.all([
         this.prisma.user.count({ where: baseUserWhere }),
@@ -574,7 +756,12 @@ export class AdminService {
         }),
         this.subscriptionService.getStats(scopedCreatorId),
         this.paymentService.getStats(scopedCreatorId),
-        this.computeDashboardTrends(14, scopedCreatorId),
+        this.computeDashboardTrends(fromYmd, toYmd, scopedCreatorId),
+        this.computeDashboardTrends(
+          prevRange.fromYmd,
+          prevRange.toYmd,
+          scopedCreatorId,
+        ),
         scopedCreatorId
           ? Promise.resolve(null)
           : Promise.all([
@@ -597,6 +784,27 @@ export class AdminService {
         },
         subscriptions: subscriptionStats,
         payments: paymentStats,
+        period: {
+          preset,
+          fromYmd,
+          toYmd,
+          label: this.dashboardPeriodLabel(fromYmd, toYmd),
+          completedPayments: trends.completedPayments,
+          newSubscriptions: trends.newSubscriptions,
+          newFans: trends.newFans,
+          pendingPayments: trends.pendingPayments,
+          failedPayments: trends.failedPayments,
+          revenueKes: trends.revenueKes,
+          revenueBySource: trends.revenueBySource,
+          previous: {
+            fromYmd: prevRange.fromYmd,
+            toYmd: prevRange.toYmd,
+            completedPayments: previousTrends.completedPayments,
+            newSubscriptions: previousTrends.newSubscriptions,
+            newFans: previousTrends.newFans,
+            revenueKes: previousTrends.revenueKes,
+          },
+        },
         trends,
         ...(platformOps
           ? {
@@ -613,6 +821,7 @@ export class AdminService {
           : {}),
       };
     } catch (error) {
+      if (error instanceof BadRequestException) throw error;
       const message = error instanceof Error ? error.message : String(error);
       const stack = error instanceof Error ? error.stack : undefined;
       this.logger.error(`getDashboardStats failed: ${message}`, stack);
@@ -620,6 +829,18 @@ export class AdminService {
         'Failed to load dashboard. Check server logs and database connection.',
       );
     }
+  }
+
+  private dashboardPeriodLabel(fromYmd: string, toYmd: string): string {
+    const pretty = (ymd: string) =>
+      new Date(`${ymd}T12:00:00.000+03:00`).toLocaleDateString('en-KE', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'Africa/Nairobi',
+      });
+    if (fromYmd === toYmd) return pretty(fromYmd);
+    return `${pretty(fromYmd)} – ${pretty(toYmd)}`;
   }
 
   async getAllCreators(pagination: PaginationDto, search?: string) {
@@ -638,12 +859,17 @@ export class AdminService {
       email: true,
       slug: true,
       displayName: true,
+      avatarUrl: true,
       supportEnabled: true,
       onboardingComplete: true,
       isActive: true,
       lastLogin: true,
       createdAt: true,
       primaryCategory: true,
+      socialLinks: true,
+      streamVerifiedAt: true,
+      streamLinksSubmittedAt: true,
+      streamReviewNote: true,
       _count: {
         select: {
           users: true,
@@ -654,7 +880,7 @@ export class AdminService {
       },
     } as const;
 
-    const [data, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.creator.findMany({
         where,
         skip: pagination.skip,
@@ -664,6 +890,13 @@ export class AdminService {
       }),
       this.prisma.creator.count({ where }),
     ]);
+
+    const data = await Promise.all(
+      rows.map(async (row) => ({
+        ...this.mapCreatorAdminRow(row),
+        avatarUrl: await this.storage.resolveUrl(row.avatarUrl),
+      })),
+    );
 
     return {
       data,
@@ -691,53 +924,128 @@ export class AdminService {
     if (dto.onboardingComplete !== undefined) {
       data.onboardingComplete = dto.onboardingComplete;
     }
-    if (Object.keys(data).length === 0) {
-      return this.prisma.creator.findUniqueOrThrow({
-        where: { id },
-        select: {
-          id: true,
-          email: true,
-          slug: true,
-          displayName: true,
-          supportEnabled: true,
-          onboardingComplete: true,
-          isActive: true,
-          lastLogin: true,
-          createdAt: true,
-          primaryCategory: true,
-          _count: {
-            select: {
-              users: true,
-              payments: true,
-              subscriptions: true,
-              creatorRewards: true,
-            },
-          },
-        },
-      });
+    const approveStream =
+      dto.streamReviewAction === 'approve' ||
+      (dto.streamReviewAction !== 'reject' && dto.streamVerified === true);
+    const rejectStream =
+      dto.streamReviewAction === 'reject' ||
+      (dto.streamReviewAction !== 'approve' && dto.streamVerified === false);
+
+    if (approveStream) {
+      const socials = parseSocialLinksJson(existing.socialLinks);
+      if (!hasRequiredStreamingChannel(socials)) {
+        throw new BadRequestException(
+          'Creator must have a TikTok or YouTube URL before you can verify them.',
+        );
+      }
+      data.streamVerifiedAt = new Date();
+      data.streamReviewNote = null;
+    } else if (rejectStream) {
+      const note = dto.streamReviewNote?.trim() || '';
+      if (note.length < 8) {
+        throw new BadRequestException(
+          'Include a short reason (at least 8 characters). We email it to the streamer.',
+        );
+      }
+      data.streamVerifiedAt = null;
+      data.streamReviewNote = note;
     }
-    return this.prisma.creator.update({
+    const select = {
+      id: true,
+      email: true,
+      slug: true,
+      displayName: true,
+      avatarUrl: true,
+      supportEnabled: true,
+      onboardingComplete: true,
+      isActive: true,
+      lastLogin: true,
+      createdAt: true,
+      primaryCategory: true,
+      socialLinks: true,
+      streamVerifiedAt: true,
+      streamLinksSubmittedAt: true,
+      streamReviewNote: true,
+      _count: {
+        select: {
+          users: true,
+          payments: true,
+          subscriptions: true,
+          creatorRewards: true,
+        },
+      },
+    } as const;
+
+    const withAvatar = async (
+      row: Prisma.CreatorGetPayload<{ select: typeof select }>,
+    ) => {
+      let avatarUrl = row.avatarUrl;
+      try {
+        avatarUrl = await this.storage.resolveUrl(row.avatarUrl);
+      } catch {
+        avatarUrl = row.avatarUrl;
+      }
+      return {
+        ...this.mapCreatorAdminRow(row),
+        avatarUrl,
+      };
+    };
+
+    if (Object.keys(data).length === 0) {
+      const row = await this.prisma.creator.findUniqueOrThrow({
+        where: { id },
+        select,
+      });
+      return withAvatar(row);
+    }
+    const updated = await this.prisma.creator.update({
       where: { id },
       data,
-      select: {
-        id: true,
-        email: true,
-        slug: true,
-        displayName: true,
-        supportEnabled: true,
-        onboardingComplete: true,
-        isActive: true,
-        lastLogin: true,
-        createdAt: true,
-        primaryCategory: true,
-        _count: {
-          select: {
-            users: true,
-            payments: true,
-            subscriptions: true,
-            creatorRewards: true,
-          },
+      select,
+    });
+    if (approveStream) {
+      this.emailStreamReviewDecision(updated, 'approved');
+    } else if (rejectStream) {
+      this.emailStreamReviewDecision(updated, 'rejected');
+    }
+    return withAvatar(updated);
+  }
+
+  private emailStreamReviewDecision(
+    creator: {
+      email: string;
+      displayName: string;
+      slug: string;
+      streamReviewNote: string | null;
+    },
+    decision: 'approved' | 'rejected',
+  ) {
+    const name = creator.displayName?.trim() || 'Streamer';
+    const note = creator.streamReviewNote?.trim();
+    if (decision === 'approved') {
+      this.outboundMail.sendInBackground({
+        toEmail: creator.email,
+        toName: name,
+        subject: 'Your streaming channels are verified',
+        text: `Hi ${name},\n\nAn admin verified your TikTok/YouTube channel. You can now generate OBS overlay links in your creator workspace.\n\nPublic page: /${creator.slug}\n`,
+        html: `<p>Hi ${name},</p><p>An admin verified your TikTok/YouTube channel. You can now generate OBS overlay links in your creator workspace.</p><p>Public page: /${creator.slug}</p>`,
+        devLog: {
+          label: 'stream verified (creator)',
+          detail: creator.email,
         },
+      });
+      return;
+    }
+    const reason = note || 'Please update your channel links and save your profile again.';
+    this.outboundMail.sendInBackground({
+      toEmail: creator.email,
+      toName: name,
+      subject: 'We could not verify your streaming channels',
+      text: `Hi ${name},\n\nAn admin could not verify your streaming links yet.\n\nReason: ${reason}\n\nUpdate your TikTok or YouTube URL on your profile. We will email you again after the next review.\n`,
+      html: `<p>Hi ${name},</p><p>An admin could not verify your streaming links yet.</p><p><strong>Reason:</strong> ${reason.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p><p>Update your TikTok or YouTube URL on your profile. We will email you again after the next review.</p>`,
+      devLog: {
+        label: 'stream rejected (creator)',
+        detail: creator.email,
       },
     });
   }
@@ -812,6 +1120,9 @@ export class AdminService {
         supportEnabled: true,
         onboardingComplete: true,
         isActive: true,
+        streamVerifiedAt: true,
+        streamLinksSubmittedAt: true,
+        streamReviewNote: true,
         lastLogin: true,
         workspaceSettings: true,
         createdAt: true,
@@ -1009,7 +1320,10 @@ export class AdminService {
     ]);
 
     return {
-      creator,
+      creator: {
+        ...creator,
+        avatarUrl: await this.storage.resolveUrl(creator.avatarUrl),
+      },
       listLimits: {
         supporters: listCap,
         payments: listCap,
@@ -1040,9 +1354,12 @@ export class AdminService {
     search?: string,
     scopedCreatorId?: string | null,
   ) {
-    const where: Prisma.UserWhereInput = {
-      ...this.subscriberBackedUserWhere(scopedCreatorId),
-    };
+    const where: Prisma.UserWhereInput = scopedCreatorId
+      ? {
+          creatorId: scopedCreatorId,
+          subscriptions: { some: {} },
+        }
+      : { ...this.subscriberBackedUserWhere() };
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
@@ -1059,6 +1376,10 @@ export class AdminService {
         take: pagination.take,
         orderBy: { createdAt: 'desc' },
         include: {
+          subscriptions: {
+            where: { status: SubscriptionStatus.ACTIVE },
+            select: { id: true, status: true, endDate: true },
+          },
           _count: {
             select: {
               subscriptions: true,
@@ -1242,7 +1563,11 @@ export class AdminService {
     ]);
 
     return {
-      data,
+      data: data.map((row) => ({
+        ...row,
+        amount: row.amount != null ? Number(row.amount) : null,
+        amountKes: row.amount != null ? Number(row.amount) : null,
+      })),
       pagination: {
         page: pagination.page || 1,
         limit: pagination.limit || 10,
@@ -1446,37 +1771,196 @@ export class AdminService {
     ) {
       return null;
     }
-    return row;
+    if (!row) return row;
+    return {
+      ...row,
+      amount: row.amount != null ? Number(row.amount) : null,
+      amountKes: row.amount != null ? Number(row.amount) : null,
+    };
   }
 
-  async updateUser(userId: string, updateData: any) {
-    const user = await this.userService.findOne(userId);
+  async updateUser(
+    userId: string,
+    updateData: UpdateUserDto,
+    scopedCreatorId?: string | null,
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
-      throw new Error('User not found');
+      throw new NotFoundException('Supporter not found');
     }
-    return await this.userService.update(userId, updateData);
+    if (scopedCreatorId && user.creatorId !== scopedCreatorId) {
+      throw new ForbiddenException();
+    }
+
+    const data: Prisma.UserUpdateInput = {};
+    if (updateData.name !== undefined) {
+      const name = updateData.name.trim();
+      data.name = name || null;
+    }
+    if (updateData.tiktokUsername !== undefined) {
+      const handle = updateData.tiktokUsername.trim().replace(/^@+/, '');
+      data.tiktokUsername = handle || null;
+    }
+    if (updateData.mpesaMobile !== undefined) {
+      data.mpesaMobile = this.parseOptionalKenyaMsisdn(updateData.mpesaMobile);
+    }
+    if (updateData.whatsappNumber !== undefined) {
+      data.whatsappNumber = this.parseOptionalKenyaMsisdn(
+        updateData.whatsappNumber,
+      );
+    }
+    if (updateData.addedToWhatsApp !== undefined) {
+      if (updateData.addedToWhatsApp) {
+        const member = await this.userHasActiveMembership(
+          userId,
+          scopedCreatorId,
+        );
+        if (!member) {
+          throw new BadRequestException(
+            'Only fans with an active membership can be added to WhatsApp',
+          );
+        }
+      }
+      data.addedToWhatsApp = updateData.addedToWhatsApp;
+    }
+    if (updateData.isActive !== undefined && !scopedCreatorId) {
+      data.isActive = updateData.isActive;
+    }
+
+    try {
+      return await this.userService.update(userId, data);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'That username is already used by another supporter on this page',
+        );
+      }
+      throw error;
+    }
   }
 
-  async confirmWhatsAppAdded(userId: string) {
-    const user = await this.userService.findOne(userId);
+  private parseOptionalKenyaMsisdn(raw: string): string | null {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const normalized = normalizeKenyaMsisdn(trimmed);
+    if (!normalized) {
+      throw new BadRequestException('Enter a valid Kenyan mobile number');
+    }
+    return normalized;
+  }
+
+  private async userHasActiveMembership(
+    userId: string,
+    scopedCreatorId?: string | null,
+  ): Promise<boolean> {
+    const row = await this.prisma.subscription.findFirst({
+      where: {
+        userId,
+        status: SubscriptionStatus.ACTIVE,
+        ...(scopedCreatorId ? { creatorId: scopedCreatorId } : {}),
+      },
+      select: { id: true },
+    });
+    return Boolean(row);
+  }
+
+  async confirmWhatsAppAdded(userId: string, scopedCreatorId?: string | null) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
-      throw new Error('User not found');
+      throw new NotFoundException('Supporter not found');
+    }
+    if (scopedCreatorId && user.creatorId !== scopedCreatorId) {
+      throw new ForbiddenException();
+    }
+    const member = await this.userHasActiveMembership(userId, scopedCreatorId);
+    if (!member) {
+      throw new BadRequestException(
+        'Only fans with an active membership can be added to WhatsApp',
+      );
     }
     return await this.userService.update(userId, { addedToWhatsApp: true });
   }
 
-  async markWhatsAppRemoved(userId: string) {
-    const user = await this.userService.findOne(userId);
+  async deleteUser(userId: string, scopedCreatorId?: string | null) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
-      throw new Error('User not found');
+      throw new NotFoundException('Supporter not found');
+    }
+    if (scopedCreatorId && user.creatorId !== scopedCreatorId) {
+      throw new ForbiddenException();
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.payment.updateMany({
+        where: { userId },
+        data: { userId: null },
+      });
+      await tx.subscription.deleteMany({
+        where: { userId },
+      });
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    return { deleted: true };
+  }
+
+  async deleteSubscription(
+    subscriptionId: string,
+    scopedCreatorId?: string | null,
+  ) {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+    });
+    if (!subscription) {
+      throw new NotFoundException('Membership not found');
+    }
+    if (scopedCreatorId && subscription.creatorId !== scopedCreatorId) {
+      throw new ForbiddenException();
+    }
+
+    const fanId = subscription.userId;
+    await this.prisma.subscription.delete({ where: { id: subscriptionId } });
+
+    if (fanId) {
+      const stillMember = await this.userHasActiveMembership(
+        fanId,
+        scopedCreatorId,
+      );
+      if (!stillMember) {
+        await this.userService.update(fanId, { addedToWhatsApp: false });
+      }
+    }
+
+    return { deleted: true };
+  }
+
+  async markWhatsAppRemoved(userId: string, scopedCreatorId?: string | null) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('Supporter not found');
+    }
+    if (scopedCreatorId && user.creatorId !== scopedCreatorId) {
+      throw new ForbiddenException();
     }
     return await this.userService.update(userId, { addedToWhatsApp: false });
   }
 
-  async updateSubscription(subscriptionId: string, updateData: any) {
-    const subscription = await this.subscriptionService.findOne(subscriptionId);
+  async updateSubscription(
+    subscriptionId: string,
+    updateData: any,
+    scopedCreatorId?: string | null,
+  ) {
+    const subscription = await this.prisma.subscription.findUnique({
+      where: { id: subscriptionId },
+    });
     if (!subscription) {
-      throw new Error('Subscription not found');
+      throw new NotFoundException('Membership not found');
+    }
+    if (scopedCreatorId && subscription.creatorId !== scopedCreatorId) {
+      throw new ForbiddenException();
     }
 
     // Admin can set amount directly - calculate discount if provided
@@ -1702,7 +2186,8 @@ export class AdminService {
       platformFeeParsed >= 0 &&
       platformFeeParsed <= 100
         ? platformFeeParsed
-        : DEFAULT_PLATFORM_FEE_PERCENT;
+        : Number(DEFAULT_PLATFORM_FEE_PERCENT);
+    const financeCfg = cid ? null : await this.finance.loadConfig();
 
     const pickTier = (global: string | null, override?: string) => {
       if (cid && override?.trim()) return override.trim();
@@ -1749,6 +2234,13 @@ export class AdminService {
         patch.obsShoutoutMessageTemplate,
       ),
       platformFeePercent,
+      ...(financeCfg
+        ? {
+            settlementPeriodHours: financeCfg.settlementPeriodHours,
+            minWithdrawalKes: centsToKesNumber(financeCfg.minWithdrawalCents),
+            withdrawalFeeKes: centsToKesNumber(financeCfg.withdrawalFeeCents),
+          }
+        : {}),
     };
   }
 
@@ -2058,6 +2550,38 @@ export class AdminService {
       });
     }
 
+    const saveKesSetting = async (
+      key: string,
+      field: string,
+      min: number,
+      max: number,
+    ) => {
+      if (updateData[field] === undefined) return;
+      const n = Number(updateData[field]);
+      if (!Number.isFinite(n) || n < min || n > max) {
+        throw new BadRequestException(`${field} is out of range`);
+      }
+      const value = n.toFixed(2);
+      await this.prisma.settings.upsert({
+        where: { key },
+        update: { value },
+        create: { key, value },
+      });
+    };
+    if (updateData.settlementPeriodHours !== undefined) {
+      const h = Math.round(Number(updateData.settlementPeriodHours));
+      if (!Number.isFinite(h) || h < 0 || h > 24 * 30) {
+        throw new BadRequestException('Settlement period must be 0–720 hours');
+      }
+      await this.prisma.settings.upsert({
+        where: { key: SETTLEMENT_PERIOD_HOURS_KEY },
+        update: { value: String(h) },
+        create: { key: SETTLEMENT_PERIOD_HOURS_KEY, value: String(h) },
+      });
+    }
+    await saveKesSetting(MIN_WITHDRAWAL_KES_KEY, 'minWithdrawalKes', 1, 10_000_000);
+    await saveKesSetting(WITHDRAWAL_FEE_KES_KEY, 'withdrawalFeeKes', 0, 10_000_000);
+
     const touchObsTimers =
       updateData.obsAlertSecsNew !== undefined ||
       updateData.obsAlertSecsRenewal !== undefined ||
@@ -2200,7 +2724,6 @@ export class AdminService {
     return await this.getSettings();
   }
 
-  /** Completed M-Pesa revenue by source; dates are Nairobi (EAT) calendar days. */
   async getRevenueBreakdown(
     query: {
       preset?: string;
@@ -2209,196 +2732,49 @@ export class AdminService {
     },
     scopedCreatorId?: string | null,
   ) {
-    const preset = (query.preset || 'today') as RevenuePreset;
-    let fromYmd: string;
-    let toYmd: string;
-    try {
-      const r = resolveRevenueRangeNairobi(
-        preset === 'custom' ? 'custom' : preset,
-        query.from,
-        query.to,
-      );
-      fromYmd = r.fromYmd;
-      toYmd = r.toYmd;
-    } catch (e) {
-      throw new BadRequestException(
-        e instanceof Error ? e.message : 'Invalid date range',
-      );
-    }
+    return this.finance.getRevenueBreakdown(query, scopedCreatorId);
+  }
 
-    const dayKeys = enumerateNairobiDays(fromYmd, toYmd);
-    if (dayKeys.length > 366) {
-      throw new BadRequestException('Date range cannot exceed 366 days');
-    }
+  getRevenueSummary(query: {
+    preset?: string;
+    from?: string;
+    to?: string;
+    creatorId?: string;
+  }) {
+    return this.finance.getAdminSummary(query);
+  }
 
-    const { startUtc, endUtc } = nairobiRangeToUtcBounds(fromYmd, toYmd);
+  getRevenueTransactions(query: {
+    from?: string;
+    to?: string;
+    preset?: string;
+    creatorId?: string;
+    type?: string;
+    provider?: string;
+    status?: string;
+    settlementStatus?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    return this.finance.getAdminTransactions(query);
+  }
 
-    const rows = await this.prisma.payment.findMany({
-      where: {
-        status: PaymentStatus.COMPLETED,
-        completedAt: { gte: startUtc, lte: endUtc },
-        amount: { not: null },
-        ...(scopedCreatorId ? { creatorId: scopedCreatorId } : {}),
-      },
-      select: {
-        id: true,
-        amount: true,
-        purpose: true,
-        completedAt: true,
-      },
-    });
-    const platformFeeRow = await this.prisma.settings.findUnique({
-      where: { key: PLATFORM_FEE_PERCENT_KEY },
-    });
-    const platformFeeParsed = parseFloat(platformFeeRow?.value ?? '');
-    const platformFeePercent =
-      Number.isFinite(platformFeeParsed) &&
-      platformFeeParsed >= 0 &&
-      platformFeeParsed <= 100
-        ? platformFeeParsed
-        : DEFAULT_PLATFORM_FEE_PERCENT;
+  getRevenueChart(query: {
+    preset?: string;
+    from?: string;
+    to?: string;
+    bucket?: string;
+    creatorId?: string;
+  }) {
+    return this.finance.getAdminChart(query);
+  }
 
-    const REVENUE_FEE_LINES = 50;
+  getPendingSettlements(query: { page?: number; limit?: number; creatorId?: string }) {
+    return this.finance.getPendingSettlements(query);
+  }
 
-    type Bucket = 'subscription' | 'shoutout' | 'accountReview' | 'other';
-    const bucketPurpose = (p: PaymentPurpose | null): Bucket => {
-      if (p === PaymentPurpose.STREAM_ALERT) return 'shoutout';
-      if (p === PaymentPurpose.COACHING_BOOKING) return 'accountReview';
-      if (p === PaymentPurpose.SUBSCRIPTION || p == null) {
-        return 'subscription';
-      }
-      return 'other';
-    };
-
-    const roundKes = (n: number) => Math.round(n * 100) / 100;
-
-    const sources: Record<
-      Bucket,
-      { key: Bucket; label: string; kes: number; count: number }
-    > = {
-      subscription: {
-        key: 'subscription',
-        label: 'Subscriptions',
-        kes: 0,
-        count: 0,
-      },
-      shoutout: { key: 'shoutout', label: 'Shoutouts', kes: 0, count: 0 },
-      accountReview: {
-        key: 'accountReview',
-        label: 'Account review (coaching)',
-        kes: 0,
-        count: 0,
-      },
-      other: { key: 'other', label: 'Other', kes: 0, count: 0 },
-    };
-
-    type DailyAgg = {
-      subscriptionKes: number;
-      shoutoutKes: number;
-      accountReviewKes: number;
-      otherKes: number;
-    };
-    const dailyMap = new Map<string, DailyAgg>();
-    for (const d of dayKeys) {
-      dailyMap.set(d, {
-        subscriptionKes: 0,
-        shoutoutKes: 0,
-        accountReviewKes: 0,
-        otherKes: 0,
-      });
-    }
-
-    let totalKes = 0;
-    let totalCount = 0;
-    let platformFeeKesAcc = 0;
-
-    for (const row of rows) {
-      if (!row.completedAt) continue;
-      const amt = Number(row.amount);
-      if (!Number.isFinite(amt)) continue;
-      const b = bucketPurpose(row.purpose);
-      sources[b].kes += amt;
-      sources[b].count += 1;
-      totalKes += amt;
-      totalCount += 1;
-      platformFeeKesAcc += roundKes((amt * platformFeePercent) / 100);
-
-      const day = nairobiYmd(row.completedAt);
-      const cell = dailyMap.get(day);
-      if (cell) {
-        if (b === 'subscription') cell.subscriptionKes += amt;
-        else if (b === 'shoutout') cell.shoutoutKes += amt;
-        else if (b === 'accountReview') cell.accountReviewKes += amt;
-        else cell.otherKes += amt;
-      }
-    }
-
-    for (const b of Object.keys(sources) as Bucket[]) {
-      sources[b].kes = roundKes(sources[b].kes);
-    }
-    totalKes = roundKes(totalKes);
-    const platformFeeKes = roundKes(platformFeeKesAcc);
-    const creatorNetKes = roundKes(totalKes - platformFeeKes);
-
-    const daily = dayKeys.map((date) => {
-      const c = dailyMap.get(date)!;
-      const t =
-        c.subscriptionKes +
-        c.shoutoutKes +
-        c.accountReviewKes +
-        c.otherKes;
-      return {
-        date,
-        subscriptionKes: roundKes(c.subscriptionKes),
-        shoutoutKes: roundKes(c.shoutoutKes),
-        accountReviewKes: roundKes(c.accountReviewKes),
-        otherKes: roundKes(c.otherKes),
-        totalKes: roundKes(t),
-      };
-    });
-
-    const paymentFeeLines = [...rows]
-      .filter((row) => row.completedAt && Number.isFinite(Number(row.amount)))
-      .sort(
-        (a, b) =>
-          (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0),
-      )
-      .slice(0, REVENUE_FEE_LINES)
-      .map((row) => {
-        const amt = Number(row.amount);
-        const fee = roundKes((amt * platformFeePercent) / 100);
-        return {
-          id: row.id,
-          completedAt: row.completedAt!.toISOString(),
-          amountKes: roundKes(amt),
-          feeKes: fee,
-          netKes: roundKes(amt - fee),
-          purpose: row.purpose,
-        };
-      });
-
-    return {
-      preset: preset === 'custom' ? 'custom' : preset,
-      timezone: 'Africa/Nairobi',
-      from: fromYmd,
-      to: toYmd,
-      rangeStartUtc: startUtc.toISOString(),
-      rangeEndUtc: endUtc.toISOString(),
-      totalKes,
-      platformFeePercent,
-      platformFeeKes,
-      creatorNetKes,
-      totalCount,
-      sources: [
-        sources.subscription,
-        sources.shoutout,
-        sources.accountReview,
-        sources.other,
-      ],
-      daily,
-      paymentFeeLines,
-      paymentFeeLinesLimit: REVENUE_FEE_LINES,
-    };
+  refundPayment(id: string, reason?: string, createdBy?: string) {
+    return this.finance.refundPayment(id, { reason, createdBy });
   }
 
   /**
@@ -2501,111 +2877,8 @@ export class AdminService {
     return { limit, contributors, subscribers };
   }
 
-  /**
-   * Creator wallet summary (all-time completed revenue).
-   * Platform fee is applied per completed payment (percent × amount, rounded to 2 dp per tx), then summed.
-   */
   async getCreatorWalletSummary(scopedCreatorId: string) {
-    const rows = await this.prisma.payment.findMany({
-      where: {
-        status: PaymentStatus.COMPLETED,
-        amount: { not: null },
-        creatorId: scopedCreatorId,
-      },
-      select: {
-        id: true,
-        amount: true,
-        purpose: true,
-        completedAt: true,
-      },
-    });
-
-    const platformFeeRow = await this.prisma.settings.findUnique({
-      where: { key: PLATFORM_FEE_PERCENT_KEY },
-    });
-    const platformFeeParsed = parseFloat(platformFeeRow?.value ?? '');
-    const platformFeePercent =
-      Number.isFinite(platformFeeParsed) &&
-      platformFeeParsed >= 0 &&
-      platformFeeParsed <= 100
-        ? platformFeeParsed
-        : DEFAULT_PLATFORM_FEE_PERCENT;
-
-    const roundKes = (n: number) => Math.round(n * 100) / 100;
-
-    const byPurpose = {
-      subscriptionKes: 0,
-      shoutoutKes: 0,
-      coachingKes: 0,
-      creatorRewardKes: 0,
-      otherKes: 0,
-    };
-    let grossKes = 0;
-    let completedPayments = 0;
-    let feeKesAcc = 0;
-
-    for (const row of rows) {
-      const amt = Number(row.amount);
-      if (!Number.isFinite(amt)) continue;
-      grossKes += amt;
-      completedPayments += 1;
-      feeKesAcc += roundKes((amt * platformFeePercent) / 100);
-      if (row.purpose === PaymentPurpose.SUBSCRIPTION || row.purpose == null) {
-        byPurpose.subscriptionKes += amt;
-      } else if (row.purpose === PaymentPurpose.STREAM_ALERT) {
-        byPurpose.shoutoutKes += amt;
-      } else if (row.purpose === PaymentPurpose.COACHING_BOOKING) {
-        byPurpose.coachingKes += amt;
-      } else if (row.purpose === PaymentPurpose.CREATOR_REWARD) {
-        byPurpose.creatorRewardKes += amt;
-      } else {
-        byPurpose.otherKes += amt;
-      }
-    }
-
-    const feeKes = roundKes(feeKesAcc);
-    const netKes = roundKes(grossKes - feeKes);
-
-    const WALLET_FEE_LINES = 40;
-    const recentFeeLines = [...rows]
-      .filter((row) => Number.isFinite(Number(row.amount)))
-      .sort((a, b) => {
-        const ta = a.completedAt?.getTime() ?? 0;
-        const tb = b.completedAt?.getTime() ?? 0;
-        return tb - ta;
-      })
-      .slice(0, WALLET_FEE_LINES)
-      .map((row) => {
-        const amt = Number(row.amount);
-        const fee = roundKes((amt * platformFeePercent) / 100);
-        return {
-          id: row.id,
-          completedAt: row.completedAt?.toISOString() ?? null,
-          amountKes: roundKes(amt),
-          feeKes: fee,
-          netKes: roundKes(amt - fee),
-          purpose: row.purpose,
-        };
-      });
-
-    return {
-      completedPayments,
-      platformFeePercent,
-      totals: {
-        grossKes: roundKes(grossKes),
-        feeKes,
-        netKes,
-      },
-      byPurpose: {
-        subscriptionKes: roundKes(byPurpose.subscriptionKes),
-        shoutoutKes: roundKes(byPurpose.shoutoutKes),
-        coachingKes: roundKes(byPurpose.coachingKes),
-        creatorRewardKes: roundKes(byPurpose.creatorRewardKes),
-        otherKes: roundKes(byPurpose.otherKes),
-      },
-      recentFeeLines,
-      recentFeeLinesLimit: WALLET_FEE_LINES,
-    };
+    return this.finance.getCreatorSummary(scopedCreatorId);
   }
 
   async getCreatorPayoutRequests(scopedCreatorId: string) {
@@ -2616,79 +2889,38 @@ export class AdminService {
     return rows.map((r) => ({
       ...r,
       amountKes: Number(r.amountKes),
+      withdrawalFeeKes: Number(r.withdrawalFeeKes),
+      payoutAmountKes: r.payoutAmountKes != null ? Number(r.payoutAmountKes) : null,
+      payoutChannel: r.payoutChannel
+        ? `****${String(r.payoutChannel).slice(-4)}`
+        : null,
+      msisdn: r.payoutChannel ? `****${String(r.payoutChannel).slice(-4)}` : null,
     }));
-  }
-
-  private async getCreatorAvailablePayoutKes(scopedCreatorId: string) {
-    const wallet = await this.getCreatorWalletSummary(scopedCreatorId);
-    const lockedRows = await this.prisma.payoutRequest.findMany({
-      where: {
-        creatorId: scopedCreatorId,
-        status: {
-          in: [
-            PayoutRequestStatus.PENDING,
-            PayoutRequestStatus.APPROVED,
-            PayoutRequestStatus.PAID,
-          ],
-        },
-      },
-      select: { amountKes: true },
-    });
-    const lockedKes = lockedRows.reduce((sum, row) => {
-      const n = Number(row.amountKes);
-      return Number.isFinite(n) ? sum + n : sum;
-    }, 0);
-    const availableKes = Math.max(0, wallet.totals.netKes - lockedKes);
-    return Math.round(availableKes * 100) / 100;
   }
 
   async createCreatorPayoutRequest(
     scopedCreatorId: string,
-    body: { amountKes: number; payoutChannel?: string; notes?: string },
+    body: {
+      amountKes: number;
+      payoutChannel?: string;
+      notes?: string;
+      channel?: 'MPESA' | 'BANK';
+      bankCode?: string;
+      bankName?: string;
+      accountNumber?: string;
+      accountName?: string;
+    },
   ) {
-    const amountKes = Math.round(Number(body.amountKes) * 100) / 100;
-    if (!Number.isFinite(amountKes) || amountKes <= 0) {
-      throw new BadRequestException('Invalid payout amount');
-    }
-    if (amountKes < MIN_PAYOUT_REQUEST_KES) {
-      throw new BadRequestException(
-        `Minimum payout request is KES ${MIN_PAYOUT_REQUEST_KES}`,
-      );
-    }
-    const pendingExists = await this.prisma.payoutRequest.findFirst({
-      where: {
-        creatorId: scopedCreatorId,
-        status: PayoutRequestStatus.PENDING,
-      },
-      select: { id: true },
-    });
-    if (pendingExists) {
-      throw new BadRequestException(
-        'You already have a pending payout request. Wait for review before creating another one.',
-      );
-    }
-    const availableKes = await this.getCreatorAvailablePayoutKes(scopedCreatorId);
-    if (amountKes > availableKes) {
-      throw new BadRequestException(
-        `Requested amount exceeds available balance (KES ${availableKes})`,
-      );
-    }
-    const row = await this.prisma.payoutRequest.create({
-      data: {
-        creatorId: scopedCreatorId,
-        amountKes,
-        payoutChannel: body.payoutChannel?.trim().slice(0, 80) || null,
-        notes: body.notes?.trim().slice(0, 1000) || null,
-      },
-    });
-    return {
-      ...row,
+    const row = await this.finance.createWithdrawal(scopedCreatorId, body);
+    const status = String(row.status || '').toUpperCase();
+    void this.payoutNotify.notify(status === 'PAID' ? 'PAID' : 'REQUESTED', {
       amountKes: Number(row.amountKes),
-      availableKesAfterRequest: Math.max(
-        0,
-        Math.round((availableKes - amountKes) * 100) / 100,
-      ),
-    };
+      payoutChannel: row.payoutChannel,
+      payoutReference: (row as { payoutReference?: string | null }).payoutReference || null,
+      notes: row.notes,
+      creator: row.creator,
+    } as any);
+    return row;
   }
 
   async listPayoutRequests(
@@ -2698,17 +2930,165 @@ export class AdminService {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
     const skip = (page - 1) * limit;
+    const where = this.payoutRequestWhere(query, scopedCreatorId);
+    const [total, rows, grouped] = await Promise.all([
+      this.prisma.payoutRequest.count({ where }),
+      this.prisma.payoutRequest.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: [{ createdAt: 'desc' }],
+        include: {
+          creator: {
+            select: {
+              id: true,
+              slug: true,
+              displayName: true,
+              email: true,
+            },
+          },
+        },
+      }),
+      this.prisma.payoutRequest.groupBy({
+        by: ['status'],
+        where: scopedCreatorId ? { creatorId: scopedCreatorId } : {},
+        _count: { _all: true },
+        _sum: { amountKes: true },
+      }),
+    ]);
+    const statusCounts = {
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      paid: 0,
+      failed: 0,
+      cancelled: 0,
+      all: 0,
+      pendingKes: 0,
+      approvedKes: 0,
+    };
+    for (const g of grouped) {
+      const n = g._count._all;
+      const kes = Number(g._sum.amountKes ?? 0);
+      statusCounts.all += n;
+      if (g.status === PayoutRequestStatus.PENDING) {
+        statusCounts.pending = n;
+        statusCounts.pendingKes = kes;
+      } else if (g.status === PayoutRequestStatus.APPROVED) {
+        statusCounts.approved = n;
+        statusCounts.approvedKes = kes;
+      } else if (g.status === PayoutRequestStatus.REJECTED) {
+        statusCounts.rejected = n;
+      } else if (g.status === PayoutRequestStatus.PAID) {
+        statusCounts.paid = n;
+      } else if (g.status === PayoutRequestStatus.FAILED) {
+        statusCounts.failed = n;
+      } else if (g.status === PayoutRequestStatus.CANCELLED) {
+        statusCounts.cancelled = n;
+      }
+    }
+    return {
+      data: rows.map((r) => ({
+        ...r,
+        amountKes: Number(r.amountKes),
+        withdrawalFeeKes: Number(r.withdrawalFeeKes ?? 0),
+        payoutAmountKes:
+          r.payoutAmountKes != null ? Number(r.payoutAmountKes) : null,
+        msisdn: extractKenyaMsisdn(r.payoutChannel),
+      })),
+      statusCounts,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    };
+  }
+
+  async exportPayoutRequestsCsv(query: { status?: string; search?: string }) {
+    const status = (query.status || 'APPROVED').toUpperCase();
+    const where = this.payoutRequestWhere({
+      search: query.search,
+      status: status === 'ALL' ? undefined : status,
+    });
+    const rows = await this.prisma.payoutRequest.findMany({
+      where,
+      orderBy: [{ createdAt: 'asc' }],
+      take: 5000,
+      include: {
+        creator: {
+          select: {
+            slug: true,
+            displayName: true,
+            email: true,
+          },
+        },
+      },
+    });
+    if (rows.length === 0) {
+      throw new BadRequestException('No payout requests match this export.');
+    }
+
+    const headers = [
+      'msisdn',
+      'amount_kes',
+      'payee_name',
+      'payee_email',
+      'slug',
+      'payout_id',
+      'status',
+      'payout_channel',
+      'payout_reference',
+      'notes',
+      'requested_at',
+      'reviewed_at',
+      'ready_for_mpesa',
+    ];
+    let totalKes = 0;
+    const csvRows = rows.map((r) => {
+      const amount = Number(r.amountKes);
+      if (Number.isFinite(amount)) totalKes += amount;
+      const msisdn = extractKenyaMsisdn(r.payoutChannel);
+      return [
+        msisdn || '',
+        Number.isFinite(amount) ? amount.toFixed(2) : '0.00',
+        r.creator?.displayName || '',
+        r.creator?.email || '',
+        r.creator?.slug || '',
+        r.id,
+        r.status,
+        r.payoutChannel || '',
+        r.payoutReference || '',
+        r.notes || '',
+        r.createdAt.toISOString(),
+        r.reviewedAt?.toISOString() || '',
+        msisdn ? 'yes' : 'no',
+      ];
+    });
+    const stamp = new Date().toISOString().slice(0, 10);
+    return {
+      csv: toCsv(headers, csvRows),
+      filename: `payout-batch-${status.toLowerCase()}-${stamp}.csv`,
+      count: rows.length,
+      totalKes: Math.round(totalKes * 100) / 100,
+    };
+  }
+
+  private payoutRequestWhere(
+    query: { search?: string; status?: string },
+    scopedCreatorId?: string | null,
+  ): Prisma.PayoutRequestWhereInput {
     const search = query.search?.trim();
     const status = query.status?.trim().toUpperCase();
-    const where: Prisma.PayoutRequestWhereInput = {
+    const statusOk =
+      status === 'PENDING' ||
+      status === 'APPROVED' ||
+      status === 'REJECTED' ||
+      status === 'PAID';
+    return {
       ...(scopedCreatorId ? { creatorId: scopedCreatorId } : {}),
-      ...(status &&
-      (status === 'PENDING' ||
-        status === 'APPROVED' ||
-        status === 'REJECTED' ||
-        status === 'PAID')
-        ? { status: status as PayoutRequestStatus }
-        : {}),
+      ...(statusOk ? { status: status as PayoutRequestStatus } : {}),
       ...(search
         ? {
             OR: [
@@ -2727,83 +3107,24 @@ export class AdminService {
           }
         : {}),
     };
-    const [total, rows] = await Promise.all([
-      this.prisma.payoutRequest.count({ where }),
-      this.prisma.payoutRequest.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: [{ createdAt: 'desc' }],
-        include: {
-          creator: {
-            select: {
-              id: true,
-              slug: true,
-              displayName: true,
-              email: true,
-            },
-          },
-        },
-      }),
-    ]);
-    return {
-      data: rows.map((r) => ({
-        ...r,
-        amountKes: Number(r.amountKes),
-      })),
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.max(1, Math.ceil(total / limit)),
-      },
-    };
   }
 
   async reviewPayoutRequest(
     id: string,
-    body: { status: 'APPROVED' | 'REJECTED' | 'PAID'; notes?: string; payoutReference?: string },
+    body: { status: 'APPROVED' | 'REJECTED' | 'PAID' | 'FAILED' | 'CANCELLED'; notes?: string; payoutReference?: string },
     reviewerLabel?: string,
   ) {
-    const existing = await this.prisma.payoutRequest.findUnique({ where: { id } });
-    if (!existing) {
-      throw new NotFoundException('Payout request not found');
+    const row = await this.finance.applyPayoutReview(id, body, reviewerLabel);
+    if (body.status === 'APPROVED' || body.status === 'REJECTED' || body.status === 'PAID') {
+      void this.payoutNotify.notify(body.status, {
+        amountKes: Number(row.amountKes),
+        payoutChannel: row.payoutChannel,
+        payoutReference: row.payoutReference,
+        notes: row.notes,
+        creator: row.creator,
+      });
     }
-    if (body.status === 'PAID' && existing.status !== PayoutRequestStatus.APPROVED) {
-      throw new BadRequestException('Only approved payout requests can be marked as paid');
-    }
-    const now = new Date();
-    const row = await this.prisma.payoutRequest.update({
-      where: { id },
-      data: {
-        status: body.status as PayoutRequestStatus,
-        notes: body.notes?.trim().slice(0, 1000) || existing.notes || null,
-        payoutReference:
-          body.payoutReference?.trim().slice(0, 120) ||
-          existing.payoutReference ||
-          null,
-        reviewedBy: reviewerLabel?.trim().slice(0, 120) || existing.reviewedBy || null,
-        reviewedAt:
-          body.status === 'APPROVED' || body.status === 'REJECTED'
-            ? now
-            : existing.reviewedAt,
-        paidAt: body.status === 'PAID' ? now : existing.paidAt,
-      },
-      include: {
-        creator: {
-          select: {
-            id: true,
-            slug: true,
-            displayName: true,
-            email: true,
-          },
-        },
-      },
-    });
-    return {
-      ...row,
-      amountKes: Number(row.amountKes),
-    };
+    return row;
   }
 
   async getCoachingBookings(pagination: PaginationDto, status?: string) {
@@ -2842,7 +3163,7 @@ export class AdminService {
     if (!existing) {
       throw new NotFoundException('Booking not found');
     }
-    return this.prisma.coachingBooking.update({
+    const updated = await this.prisma.coachingBooking.update({
       where: { id },
       data: {
         ...(dto.status !== undefined ? { status: dto.status } : {}),
@@ -2851,6 +3172,10 @@ export class AdminService {
           : {}),
       },
     });
+    if (dto.status && dto.status !== existing.status) {
+      void this.fanNotify.coachingStatus(id, dto.status);
+    }
+    return updated;
   }
 
   async getCreatorRewardsAdmin(scopedCreatorId?: string | null) {

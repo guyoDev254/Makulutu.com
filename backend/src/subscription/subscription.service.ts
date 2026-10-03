@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Subscription, SubscriptionStatus, Prisma } from '@prisma/client';
 import { User } from '@prisma/client';
+import { parseCheckoutCountry } from '../common/utils/checkout-country';
 
 @Injectable()
 export class SubscriptionService {
@@ -13,6 +14,7 @@ export class SubscriptionService {
     amount: number,
     paymentId?: string,
     creatorId?: string | null,
+    checkoutCountry?: string | null,
   ): Promise<Subscription> {
     const startDate = new Date();
     const endDate = new Date();
@@ -30,6 +32,7 @@ export class SubscriptionService {
         amount,
         paymentId,
         status: SubscriptionStatus.ACTIVE,
+        checkoutCountry: parseCheckoutCountry(checkoutCountry),
         ...(resolvedCreatorId ? { creatorId: resolvedCreatorId } : {}),
       },
     });
@@ -130,6 +133,7 @@ export class SubscriptionService {
     months: number,
     amount: number,
     paymentId?: string,
+    checkoutCountry?: string | null,
   ): Promise<Subscription> {
     const existing = await this.findOne(subscriptionId);
     
@@ -153,6 +157,9 @@ export class SubscriptionService {
         amount: newAmount,
         paymentId: paymentId || existing.paymentId,
         status: SubscriptionStatus.ACTIVE, // Reactivate if expired
+        checkoutCountry: parseCheckoutCountry(
+          checkoutCountry ?? existing.checkoutCountry,
+        ),
       },
     });
   }

@@ -6,10 +6,12 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaypalCaptureDto } from './dto/paypal-capture.dto';
+import { PaystackVerifyDto } from './dto/paystack-verify.dto';
 
 @Controller('payments')
 export class PaymentController {
@@ -25,39 +27,42 @@ export class PaymentController {
   @HttpCode(HttpStatus.OK)
   async capturePaypal(@Body() body: PaypalCaptureDto) {
     const payment = await this.paymentService.capturePayPalOrder(body.orderId);
-    return {
-      ...payment,
-      status: payment.status?.toLowerCase(),
-    };
+    return this.paymentService.findOneForClient(payment.id);
+  }
+
+  /** Confirm Paystack hosted checkout after the buyer returns (reference = payment id). */
+  @Post('paystack/verify')
+  @HttpCode(HttpStatus.OK)
+  async verifyPaystack(@Body() body: PaystackVerifyDto) {
+    const payment = await this.paymentService.verifyPaystackReference(
+      body.reference,
+    );
+    return this.paymentService.findOneForClient(payment.id);
   }
 
   @Get()
   findAll() {
-    return this.paymentService.findAll();
+    throw new ForbiddenException('Use /admin/payments or /creator-portal/payments');
   }
 
   @Get('stats')
   getStats() {
-    return this.paymentService.getStats();
+    throw new ForbiddenException('Use /admin/dashboard');
   }
 
   @Get('user/:userId')
-  findByUser(@Param('userId') userId: string) {
-    return this.paymentService.findByUser(userId);
+  findByUser() {
+    throw new ForbiddenException('Use /fan-portal/payments');
   }
 
   @Get(':id')
   findOne(@Param('id') id: string) {
-    return this.paymentService.findOne(id);
+    return this.paymentService.findOneForClient(id);
   }
 
   @Get(':id/status')
   async checkStatus(@Param('id') id: string) {
     const payment = await this.paymentService.checkPaymentStatus(id);
-    // Return payment with lowercase status for frontend compatibility
-    return {
-      ...payment,
-      status: payment.status.toLowerCase(),
-    };
+    return this.paymentService.findOneForClient(payment.id);
   }
 }

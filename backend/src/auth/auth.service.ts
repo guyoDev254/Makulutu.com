@@ -66,6 +66,7 @@ export class AuthService {
     const accessToken = this.jwtService.sign(payload);
 
     this.logger.log(`Admin ${admin.username} logged in successfully`);
+    console.log(accessToken);
 
     return {
       accessToken,

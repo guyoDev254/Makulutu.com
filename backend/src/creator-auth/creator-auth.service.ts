@@ -11,9 +11,34 @@ import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { OutboundMailService } from '../mail/outbound-mail.service';
+import { GoogleTokenService } from '../common/google-auth/google-token.service';
+import { ScheduledLivesService } from '../scheduled-lives/scheduled-lives.service';
+import {
+  creatorMediaColumn,
+  isCreatorMediaSlot,
+  MediaStorageService,
+} from '../common/media/media-storage.service';
+import {
+  EMAIL_OTP_RESEND_MS,
+  EMAIL_OTP_TTL_MS,
+  emailOtpMail,
+  hashEmailOtp,
+  newEmailOtp,
+} from '../common/utils/email-otp';
+import {
+  hasRequiredStreamingChannel,
+  parseSocialLinksJson,
+  streamingChannelFingerprint,
+  streamVerificationStatus,
+} from '../common/utils/streaming-channel-urls';
 import { LoginCreatorDto } from './dto/login-creator.dto';
 import { SignupCreatorDto } from './dto/signup-creator.dto';
 import { UpdateCreatorProfileDto } from './dto/update-creator-profile.dto';
+import {
+  DateOfBirthError,
+  parseAdultDateOfBirth,
+} from '../common/utils/date-of-birth';
+import { extractStoredS3Key } from '../storage/storage.service';
 import {
   findAdminByLoginIdentifier,
   promoteSeededAdminUsernameIfAlias,
@@ -27,27 +52,45 @@ export class CreatorAuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly outboundMail: OutboundMailService,
+    private readonly google: GoogleTokenService,
+    private readonly scheduledLives: ScheduledLivesService,
+    private readonly media: MediaStorageService,
   ) {}
+
+  private requireAdultDob(raw?: string | null) {
+    try {
+      return parseAdultDateOfBirth(raw);
+    } catch (err) {
+      throw new BadRequestException(
+        err instanceof DateOfBirthError ? err.message : 'You must be 18 or older to register.',
+      );
+    }
+  }
 
   async signup(dto: SignupCreatorDto) {
     const email = dto.email.trim().toLowerCase();
     const slug = dto.slug.trim().toLowerCase();
     const existing = await this.prisma.creator.findFirst({
       where: { OR: [{ email }, { slug }] },
-      select: { id: true, email: true, slug: true },
     });
     if (existing) {
-      throw new BadRequestException(
-        existing.email === email
-          ? 'Email is already registered'
-          : 'Slug is already taken',
-      );
+      const emailMatch =
+        existing.email.trim().toLowerCase() === email;
+      const slugMatch = existing.slug.trim().toLowerCase() === slug;
+      if (emailMatch && !existing.emailVerifiedAt) {
+        return this.retryUnverifiedSignup(existing, dto);
+      }
+      if (emailMatch) {
+        throw new BadRequestException('Email is already registered. Sign in instead.');
+      }
+      if (slugMatch) {
+        throw new BadRequestException('Slug is already taken. Choose another public page name.');
+      }
+      throw new BadRequestException('Email is already registered');
     }
 
     const hashed = await bcrypt.hash(dto.password, 10);
-    const token = this.newVerifyToken();
-    const tokenHash = this.hashVerifyToken(token);
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24);
+    const code = newEmailOtp();
     const created = await this.prisma.creator.create({
       data: {
         email,
@@ -57,16 +100,68 @@ export class CreatorAuthService {
         bio: dto.bio?.trim() || null,
         whatIDo: dto.whatIDo?.trim() || null,
         packagesSummary: dto.packagesSummary?.trim() || null,
-        emailVerificationTokenHash: tokenHash,
-        emailVerificationExpiresAt: expiresAt,
+        dateOfBirth: this.requireAdultDob(dto.dateOfBirth),
+        emailVerificationTokenHash: hashEmailOtp(email, code),
+        emailVerificationExpiresAt: new Date(Date.now() + EMAIL_OTP_TTL_MS),
       },
     });
-    await this.sendVerificationEmail(created.email, token, created.displayName);
+    return this.finishSignup(created.email, code, created.displayName);
+  }
+
+  private async retryUnverifiedSignup(existing: Creator, dto: SignupCreatorDto) {
+    const hashed = await bcrypt.hash(dto.password, 10);
+    const code = newEmailOtp();
+    const displayName = dto.displayName.trim() || existing.displayName;
+    this.assertEmailOtpResendAllowed(existing.emailVerificationExpiresAt);
+    await this.prisma.creator.update({
+      where: { id: existing.id },
+      data: {
+        password: hashed,
+        displayName,
+        dateOfBirth: this.requireAdultDob(dto.dateOfBirth),
+        emailVerificationTokenHash: hashEmailOtp(existing.email, code),
+        emailVerificationExpiresAt: new Date(Date.now() + EMAIL_OTP_TTL_MS),
+      },
+    });
+    return this.finishSignup(existing.email, code, displayName);
+  }
+
+  private async finishSignup(email: string, code: string, displayName: string) {
+    this.queueVerificationEmail(email, code, displayName);
     return {
       ok: true,
       requiresEmailVerification: true,
-      message: 'Account created. Check your email and open the verification link.',
+      email,
+      message:
+        'Account created. Enter the 6-digit code we sent to your email, then sign in.',
+      ...this.devOtpPayload(code),
     };
+  }
+
+  private queueVerificationEmail(
+    toEmail: string,
+    code: string,
+    displayName: string,
+  ): void {
+    void this.trySendVerificationEmail(toEmail, code, displayName);
+  }
+
+  private async trySendVerificationEmail(
+    toEmail: string,
+    code: string,
+    displayName: string,
+  ): Promise<boolean> {
+    try {
+      await this.sendVerificationEmail(toEmail, code, displayName);
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `Verification email failed for ${toEmail}: ${message}.` +
+          (this.isDev() ? ` Dev code: ${code}` : ''),
+      );
+      return false;
+    }
   }
 
   async login(dto: LoginCreatorDto) {
@@ -79,6 +174,11 @@ export class CreatorAuthService {
     let creator = await this.findCreatorByIdentifier(identifierLower);
 
     if (creator) {
+      if (!creator.password) {
+        throw new UnauthorizedException(
+          'This account uses Google sign-in. Continue with Google, or set a password from the website.',
+        );
+      }
       const creatorPwOk = await bcrypt.compare(dto.password, creator.password);
       if (!creatorPwOk) {
         let admin = await findAdminByLoginIdentifier(this.prisma, identifier);
@@ -125,12 +225,67 @@ export class CreatorAuthService {
     }
     if (!creator.emailVerifiedAt) {
       throw new UnauthorizedException(
-        'Please verify your email first. Check your inbox for the verification link.',
+        'Please verify your email first. Enter the 6-digit code we sent, or request a new one.',
       );
     }
     await this.prisma.creator.update({
       where: { id: creator.id },
       data: { lastLogin: new Date() },
+    });
+    return this.issueToken(creator);
+  }
+
+  async loginWithGoogle(idToken: string, dateOfBirthRaw?: string) {
+    const profile = await this.google.verifyIdToken(idToken);
+    const byGoogle = await this.prisma.creator.findUnique({
+      where: { googleId: profile.googleId },
+    });
+    const byEmail = await this.prisma.creator.findFirst({
+      where: { email: { equals: profile.email, mode: 'insensitive' } },
+    });
+    let creator = byGoogle || byEmail;
+    if (creator && byGoogle && byEmail && byGoogle.id !== byEmail.id) {
+      throw new BadRequestException('This Google account cannot be linked');
+    }
+    if (creator && creator.googleId && creator.googleId !== profile.googleId) {
+      throw new BadRequestException('Email is already registered');
+    }
+    if (!creator) {
+      const slug = await this.reserveUniqueSlug(
+        this.toSlug(profile.email.split('@')[0] || 'creator'),
+      );
+      const displayName = (profile.name || slug).slice(0, 80);
+      creator = await this.prisma.creator.create({
+        data: {
+          email: profile.email,
+          googleId: profile.googleId,
+          slug,
+          displayName,
+          dateOfBirth: this.requireAdultDob(dateOfBirthRaw),
+          password: null,
+          avatarUrl: profile.picture,
+          emailVerifiedAt: new Date(),
+          lastLogin: new Date(),
+          onboardingComplete: false,
+        },
+      });
+      return this.issueToken(creator);
+    }
+    if (!creator.isActive) {
+      throw new UnauthorizedException('Creator account is inactive');
+    }
+    creator = await this.prisma.creator.update({
+      where: { id: creator.id },
+      data: {
+        googleId: creator.googleId || profile.googleId,
+        emailVerifiedAt: creator.emailVerifiedAt ?? new Date(),
+        emailVerificationTokenHash: null,
+        emailVerificationExpiresAt: null,
+        lastLogin: new Date(),
+        ...(!creator.avatarUrl && profile.picture
+          ? { avatarUrl: profile.picture }
+          : {}),
+      },
     });
     return this.issueToken(creator);
   }
@@ -156,21 +311,34 @@ export class CreatorAuthService {
       where: { id: creatorId },
     });
     if (!creator) throw new UnauthorizedException('Creator not found');
+    if (creator.thumbnailUrl || creator.coverUrl) {
+      await this.deleteStoredExtras(creator);
+      const cleaned = await this.prisma.creator.update({
+        where: { id: creatorId },
+        data: { thumbnailUrl: null, coverUrl: null },
+      });
+      return this.serializeCreator(cleaned);
+    }
     return this.serializeCreator(creator);
   }
 
   async updateProfile(creatorId: string, dto: UpdateCreatorProfileDto) {
+    const existingCreator = await this.prisma.creator.findUnique({
+      where: { id: creatorId },
+    });
+    if (!existingCreator) throw new UnauthorizedException('Creator not found');
+
     const hasSlug =
       dto.slug !== undefined &&
       dto.slug !== null &&
       String(dto.slug).trim().length > 0;
     if (hasSlug) {
       const slug = String(dto.slug).trim().toLowerCase();
-      const existing = await this.prisma.creator.findFirst({
+      const taken = await this.prisma.creator.findFirst({
         where: { slug, id: { not: creatorId } },
         select: { id: true },
       });
-      if (existing) throw new BadRequestException('Slug is already taken');
+      if (taken) throw new BadRequestException('Slug is already taken');
     }
 
     const data: Prisma.CreatorUpdateInput = {};
@@ -197,10 +365,22 @@ export class CreatorAuthService {
           : String(dto.packagesSummary).trim() || null;
     }
     if (dto.avatarUrl !== undefined) {
-      data.avatarUrl =
+      const raw =
         dto.avatarUrl === null || dto.avatarUrl === ''
-          ? null
-          : String(dto.avatarUrl).trim() || null;
+          ? ''
+          : String(dto.avatarUrl).trim();
+      if (raw) {
+        const key = this.storageKeyFromAvatarInput(raw);
+        if (key) {
+          data.avatarUrl = key;
+        } else if (
+          /^https:\/\//i.test(raw) &&
+          !/[?&]X-Amz-/i.test(raw) &&
+          !raw.includes('/media?')
+        ) {
+          data.avatarUrl = raw;
+        }
+      }
     }
     if (dto.primaryCategory !== undefined) {
       data.primaryCategory =
@@ -214,47 +394,245 @@ export class CreatorAuthService {
     if (dto.onboardingComplete !== undefined) {
       data.onboardingComplete = dto.onboardingComplete;
     }
+    if (dto.fanThankYouMessage !== undefined) {
+      data.fanThankYouMessage =
+        dto.fanThankYouMessage === null || dto.fanThankYouMessage === ''
+          ? null
+          : String(dto.fanThankYouMessage).trim() || null;
+    }
+    const prevSocials = this.parseSocialLinks(existingCreator.socialLinks);
+    const nextSocials = {
+      tiktok:
+        dto.tiktokUrl !== undefined
+          ? this.normalizeNullableUrl(dto.tiktokUrl)
+          : prevSocials.tiktok,
+      instagram:
+        dto.instagramUrl !== undefined
+          ? this.normalizeNullableUrl(dto.instagramUrl)
+          : prevSocials.instagram,
+      youtube:
+        dto.youtubeUrl !== undefined
+          ? this.normalizeNullableUrl(dto.youtubeUrl)
+          : prevSocials.youtube,
+    };
     if (
       dto.tiktokUrl !== undefined ||
       dto.instagramUrl !== undefined ||
       dto.youtubeUrl !== undefined
     ) {
-      const existing = await this.prisma.creator.findUnique({
-        where: { id: creatorId },
-        select: { socialLinks: true },
-      });
-      if (!existing) throw new UnauthorizedException('Creator not found');
-      const prev = this.parseSocialLinks(existing.socialLinks);
-      const next = {
-        tiktok:
-          dto.tiktokUrl !== undefined
-            ? this.normalizeNullableUrl(dto.tiktokUrl)
-            : prev.tiktok,
-        instagram:
-          dto.instagramUrl !== undefined
-            ? this.normalizeNullableUrl(dto.instagramUrl)
-            : prev.instagram,
-        youtube:
-          dto.youtubeUrl !== undefined
-            ? this.normalizeNullableUrl(dto.youtubeUrl)
-            : prev.youtube,
-      };
-      data.socialLinks = this.stringifySocialLinks(next);
+      data.socialLinks = this.stringifySocialLinks(nextSocials);
+    }
+
+    const willOnboard =
+      dto.onboardingComplete !== undefined
+        ? dto.onboardingComplete
+        : existingCreator.onboardingComplete;
+    if (willOnboard && !hasRequiredStreamingChannel(nextSocials)) {
+      throw new BadRequestException(
+        'Add a TikTok or YouTube channel URL. An admin must verify it before you can generate OBS links.',
+      );
+    }
+
+    const prevFp = streamingChannelFingerprint(prevSocials);
+    const nextFp = streamingChannelFingerprint(nextSocials);
+    const channelsChanged = prevFp !== nextFp;
+    let notifyStreamReview = false;
+    if (channelsChanged) {
+      if (hasRequiredStreamingChannel(nextSocials)) {
+        data.streamLinksSubmittedAt = new Date();
+        data.streamVerifiedAt = null;
+        data.streamReviewNote = null;
+        notifyStreamReview = true;
+      } else {
+        data.streamLinksSubmittedAt = null;
+        data.streamVerifiedAt = null;
+        data.streamReviewNote = null;
+      }
+    } else if (
+      hasRequiredStreamingChannel(nextSocials) &&
+      !existingCreator.streamVerifiedAt &&
+      !existingCreator.streamLinksSubmittedAt
+    ) {
+      data.streamLinksSubmittedAt = new Date();
+      notifyStreamReview = true;
     }
 
     if (Object.keys(data).length === 0) {
-      const creator = await this.prisma.creator.findUnique({
-        where: { id: creatorId },
-      });
-      if (!creator) throw new UnauthorizedException('Creator not found');
-      return this.serializeCreator(creator);
+      return this.serializeCreator(existingCreator);
     }
 
     const updated = await this.prisma.creator.update({
       where: { id: creatorId },
       data,
     });
+    if (notifyStreamReview) {
+      this.notifyStreamLinksSubmitted(updated, nextSocials);
+    }
     return this.serializeCreator(updated);
+  }
+
+  async uploadAvatar(
+    creatorId: string,
+    file: { buffer?: Buffer; mimetype?: string } | undefined,
+    origin: string,
+  ) {
+    return this.uploadMedia(creatorId, 'avatar', file, origin);
+  }
+
+  async clearAvatar(creatorId: string) {
+    return this.clearMedia(creatorId, 'avatar');
+  }
+
+  async uploadMedia(
+    creatorId: string,
+    slotRaw: string,
+    file: { buffer?: Buffer; mimetype?: string } | undefined,
+    origin: string,
+  ) {
+    if (!isCreatorMediaSlot(slotRaw)) {
+      throw new BadRequestException('Only a profile picture is stored.');
+    }
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Choose a photo to upload.');
+    }
+    const mime = (file.mimetype || '').toLowerCase();
+    const ext =
+      mime === 'image/png'
+        ? 'png'
+        : mime === 'image/webp'
+          ? 'webp'
+          : mime === 'image/jpeg' || mime === 'image/jpg'
+            ? 'jpg'
+            : null;
+    if (!ext) {
+      throw new BadRequestException('Use a JPEG, PNG, or WebP image.');
+    }
+    const maxBytes = 4 * 1024 * 1024;
+    if (file.buffer.length > maxBytes) {
+      throw new BadRequestException('Photo must be under 4 MB.');
+    }
+    const existing = await this.prisma.creator.findUnique({
+      where: { id: creatorId },
+      select: { avatarUrl: true, thumbnailUrl: true, coverUrl: true },
+    });
+    if (!existing) {
+      throw new BadRequestException('Creator not found');
+    }
+    const column = creatorMediaColumn(slotRaw);
+    const stored = await this.media.putCreatorImage({
+      creatorId,
+      slot: slotRaw,
+      buffer: file.buffer,
+      ext,
+      contentType: mime || `image/${ext}`,
+      origin,
+      previousUrl: existing[column],
+    });
+    const updated = await this.prisma.creator.update({
+      where: { id: creatorId },
+      data: {
+        [column]: stored.key,
+        thumbnailUrl: null,
+        coverUrl: null,
+      },
+    });
+    await this.deleteStoredExtras(existing);
+    return this.serializeCreator(updated);
+  }
+
+  async presignMedia(creatorId: string, slotRaw: string, contentTypeRaw: string) {
+    if (!isCreatorMediaSlot(slotRaw)) {
+      throw new BadRequestException('Only a profile picture is stored.');
+    }
+    const mime = (contentTypeRaw || '').toLowerCase();
+    const ext =
+      mime === 'image/png'
+        ? 'png'
+        : mime === 'image/webp'
+          ? 'webp'
+          : mime === 'image/jpeg' || mime === 'image/jpg'
+            ? 'jpg'
+            : null;
+    if (!ext) {
+      throw new BadRequestException('Use a JPEG, PNG, or WebP image.');
+    }
+    try {
+      return await this.media.presignCreatorUpload({
+        creatorId,
+        slot: slotRaw,
+        ext,
+        contentType: mime,
+      });
+    } catch (err) {
+      throw new BadRequestException(
+        err instanceof Error
+          ? err.message
+          : 'Could not create an upload URL. On EC2 this uses IAM role MakulutuEC2S3Role.',
+      );
+    }
+  }
+
+  async confirmMedia(creatorId: string, slotRaw: string, keyRaw: string) {
+    if (!isCreatorMediaSlot(slotRaw)) {
+      throw new BadRequestException('Only a profile picture is stored.');
+    }
+    const key = (keyRaw || '').trim();
+    const prefix = `creators/${creatorId}/profile/${slotRaw}-`;
+    if (!key.startsWith(prefix) || key.includes('..')) {
+      throw new BadRequestException('Invalid storage key.');
+    }
+    const existing = await this.prisma.creator.findUnique({
+      where: { id: creatorId },
+      select: { avatarUrl: true, thumbnailUrl: true, coverUrl: true },
+    });
+    if (!existing) {
+      throw new BadRequestException('Creator not found');
+    }
+    const column = creatorMediaColumn(slotRaw);
+    const updated = await this.prisma.creator.update({
+      where: { id: creatorId },
+      data: {
+        [column]: key,
+        thumbnailUrl: null,
+        coverUrl: null,
+      },
+    });
+    await this.media.deleteStored(existing[column]);
+    await this.deleteStoredExtras(existing);
+    return this.serializeCreator(updated);
+  }
+
+  async clearMedia(creatorId: string, slotRaw: string) {
+    if (!isCreatorMediaSlot(slotRaw)) {
+      throw new BadRequestException('Only a profile picture is stored.');
+    }
+    const column = creatorMediaColumn(slotRaw);
+    const existing = await this.prisma.creator.findUnique({
+      where: { id: creatorId },
+      select: { avatarUrl: true, thumbnailUrl: true, coverUrl: true },
+    });
+    if (existing?.[column]) {
+      await this.media.deleteStored(existing[column]);
+    }
+    const updated = await this.prisma.creator.update({
+      where: { id: creatorId },
+      data: { avatarUrl: null, thumbnailUrl: null, coverUrl: null },
+    });
+    await this.deleteStoredExtras({
+      thumbnailUrl: existing?.thumbnailUrl,
+      coverUrl: existing?.coverUrl,
+    });
+    return this.serializeCreator(updated);
+  }
+
+  private async deleteStoredExtras(row: {
+    thumbnailUrl?: string | null;
+    coverUrl?: string | null;
+  }) {
+    await Promise.all([
+      this.media.deleteStored(row.thumbnailUrl),
+      this.media.deleteStored(row.coverUrl),
+    ]);
   }
 
   async listPublicCreators() {
@@ -263,9 +641,11 @@ export class CreatorAuthService {
         isActive: true,
         onboardingComplete: true,
         supportEnabled: true,
+        streamVerifiedAt: { not: null },
       },
       orderBy: [{ updatedAt: 'desc' }],
       select: {
+        id: true,
         slug: true,
         displayName: true,
         bio: true,
@@ -277,21 +657,28 @@ export class CreatorAuthService {
       },
       take: 60,
     });
-    return rows.map((row) => {
-      const socials = this.parseSocialLinks(row.socialLinks);
-      return {
-        slug: row.slug,
-        displayName: row.displayName,
-        bio: row.bio,
-        whatIDo: row.whatIDo,
-        packagesSummary: row.packagesSummary,
-        avatarUrl: row.avatarUrl,
-        primaryCategory: row.primaryCategory,
-        tiktokUrl: socials.tiktok,
-        instagramUrl: socials.instagram,
-        youtubeUrl: socials.youtube,
-      };
-    });
+    const nextByCreator = await this.scheduledLives.nextLiveByCreatorIds(
+      rows.map((r) => r.id),
+    );
+    return Promise.all(
+      rows.map(async (row) => {
+        const socials = this.parseSocialLinks(row.socialLinks);
+        const avatarUrl = await this.media.resolveUrl(row.avatarUrl);
+        return {
+          slug: row.slug,
+          displayName: row.displayName,
+          bio: row.bio,
+          whatIDo: row.whatIDo,
+          packagesSummary: row.packagesSummary,
+          avatarUrl,
+          primaryCategory: row.primaryCategory,
+          tiktokUrl: socials.tiktok,
+          instagramUrl: socials.instagram,
+          youtubeUrl: socials.youtube,
+          nextLive: nextByCreator.get(row.id) || null,
+        };
+      }),
+    );
   }
 
   async getPublicCreatorBySlug(slug: string) {
@@ -305,6 +692,7 @@ export class CreatorAuthService {
         supportEnabled: true,
       },
       select: {
+        id: true,
         slug: true,
         displayName: true,
         bio: true,
@@ -313,22 +701,97 @@ export class CreatorAuthService {
         socialLinks: true,
         avatarUrl: true,
         primaryCategory: true,
+        fanThankYouMessage: true,
       },
     });
     if (!row) return null;
     const socials = this.parseSocialLinks(row.socialLinks);
+    const [supporters, upcomingLives, avatarUrl] =
+      await Promise.all([
+        this.publicSupporters(row.slug),
+        this.scheduledLives.publicUpcomingForCreator(row.id),
+        this.media.resolveUrl(row.avatarUrl),
+      ]);
     return {
       slug: row.slug,
       displayName: row.displayName,
       bio: row.bio,
       whatIDo: row.whatIDo,
       packagesSummary: row.packagesSummary,
-      avatarUrl: row.avatarUrl,
+      avatarUrl,
       primaryCategory: row.primaryCategory,
       tiktokUrl: socials.tiktok,
       instagramUrl: socials.instagram,
       youtubeUrl: socials.youtube,
+      thankYouMessage: row.fanThankYouMessage,
+      fanThankYouMessage: row.fanThankYouMessage,
+      supporters,
+      upcomingLives,
     };
+  }
+
+  private async publicSupporters(slug: string) {
+    const creator = await this.prisma.creator.findFirst({
+      where: { slug },
+      select: { id: true },
+    });
+    if (!creator) return [];
+    const groups = await this.prisma.payment.groupBy({
+      by: ['userId'],
+      where: {
+        creatorId: creator.id,
+        status: 'COMPLETED',
+        userId: { not: null },
+        amount: { not: null },
+      },
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+      take: 12,
+    });
+    const ids = groups
+      .map((g) => g.userId)
+      .filter((id): id is string => Boolean(id));
+    if (ids.length === 0) return [];
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        name: true,
+        tiktokUsername: true,
+        fan: { select: { showOnLeaderboard: true, avatarUrl: true, name: true } },
+      },
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    const ranked = groups
+      .map((g, idx) => {
+        const u = byId.get(g.userId as string);
+        if (!u) return null;
+        if (u.fan && !u.fan.showOnLeaderboard) return null;
+        return {
+          rank: idx + 1,
+          displayName:
+            u.fan?.name?.trim() ||
+            u.name?.trim() ||
+            (u.tiktokUsername ? `@${u.tiktokUsername}` : 'Supporter'),
+          tiktokUsername: u.tiktokUsername,
+          avatarUrl: u.fan?.avatarUrl,
+          totalKes: Math.round(Number(g._sum.amount ?? 0) * 100) / 100,
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 8) as Array<{
+      rank: number;
+      displayName: string;
+      tiktokUsername: string | null;
+      avatarUrl: string | null;
+      totalKes: number;
+    }>;
+    return Promise.all(
+      ranked.map(async (row) => ({
+        ...row,
+        avatarUrl: await this.media.resolveUrl(row.avatarUrl),
+      })),
+    );
   }
 
   async verifyEmail(tokenRaw: string | undefined) {
@@ -342,7 +805,7 @@ export class CreatorAuthService {
       },
     });
     if (!creator) {
-      throw new BadRequestException('Verification link is invalid or expired');
+      throw new BadRequestException('Verification code is invalid or expired');
     }
     const updated = await this.prisma.creator.update({
       where: { id: creator.id },
@@ -355,7 +818,41 @@ export class CreatorAuthService {
     return {
       ok: true,
       message: 'Email verified successfully. You can now sign in.',
-      creator: this.serializeCreator(updated),
+      creator: await this.serializeCreator(updated),
+    };
+  }
+
+  async verifyEmailOtp(emailRaw: string, codeRaw: string) {
+    const email = emailRaw.trim().toLowerCase();
+    const code = codeRaw.trim();
+    const creator = await this.prisma.creator.findUnique({ where: { email } });
+    if (!creator?.emailVerificationTokenHash || !creator.emailVerificationExpiresAt) {
+      throw new UnauthorizedException('Request a new code first');
+    }
+    if (creator.emailVerifiedAt) {
+      return {
+        ok: true,
+        message: 'Email is already verified. You can sign in.',
+      };
+    }
+    if (creator.emailVerificationExpiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException('Code has expired');
+    }
+    const expected = hashEmailOtp(email, code);
+    if (expected !== creator.emailVerificationTokenHash) {
+      throw new UnauthorizedException('Invalid code');
+    }
+    await this.prisma.creator.update({
+      where: { id: creator.id },
+      data: {
+        emailVerifiedAt: new Date(),
+        emailVerificationTokenHash: null,
+        emailVerificationExpiresAt: null,
+      },
+    });
+    return {
+      ok: true,
+      message: 'Email verified successfully. You can now sign in.',
     };
   }
 
@@ -367,24 +864,26 @@ export class CreatorAuthService {
     if (!creator) {
       return {
         ok: true,
-        message: 'If this email exists, a verification link has been sent.',
+        message: 'If this email exists, a verification code has been sent.',
       };
     }
     if (creator.emailVerifiedAt) {
       return { ok: true, message: 'Email is already verified.' };
     }
-    const token = this.newVerifyToken();
+    this.assertEmailOtpResendAllowed(creator.emailVerificationExpiresAt);
+    const code = newEmailOtp();
     await this.prisma.creator.update({
       where: { id: creator.id },
       data: {
-        emailVerificationTokenHash: this.hashVerifyToken(token),
-        emailVerificationExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
+        emailVerificationTokenHash: hashEmailOtp(email, code),
+        emailVerificationExpiresAt: new Date(Date.now() + EMAIL_OTP_TTL_MS),
       },
     });
-    await this.sendVerificationEmail(creator.email, token, creator.displayName);
+    this.queueVerificationEmail(creator.email, code, creator.displayName);
     return {
       ok: true,
-      message: 'Verification email sent. Please check your inbox.',
+      message: 'We sent a new 6-digit code to your email.',
+      ...this.devOtpPayload(code),
     };
   }
 
@@ -443,7 +942,7 @@ export class CreatorAuthService {
     };
   }
 
-  private issueToken(creator: Creator) {
+  private async issueToken(creator: Creator) {
     const payload = {
       sub: creator.id,
       email: creator.email,
@@ -452,8 +951,24 @@ export class CreatorAuthService {
     const accessToken = this.jwtService.sign(payload);
     return {
       accessToken,
-      creator: this.serializeCreator(creator),
+      creator: await this.serializeCreator(creator),
     };
+  }
+
+  private isDev(): boolean {
+    return this.config.get<string>('NODE_ENV') !== 'production';
+  }
+
+  private devOtpPayload(code: string): { debugOtp?: string } {
+    return this.isDev() ? { debugOtp: code } : {};
+  }
+
+  private assertEmailOtpResendAllowed(expiresAt: Date | null | undefined) {
+    if (!expiresAt) return;
+    const remaining = expiresAt.getTime() - Date.now();
+    if (remaining > EMAIL_OTP_TTL_MS - EMAIL_OTP_RESEND_MS) {
+      throw new BadRequestException('Wait a moment before requesting another code');
+    }
   }
 
   private newVerifyToken(): string {
@@ -464,37 +979,30 @@ export class CreatorAuthService {
     return createHash('sha256').update(token).digest('hex');
   }
 
-  private verificationFrontendUrl(token: string): string {
-    const base =
+  private frontendOrigin(): string {
+    const raw =
       this.config.get<string>('FRONTEND_URL')?.trim() || 'http://localhost:3000';
-    return `${base}/creator/verify-email?token=${encodeURIComponent(token)}`;
+    return raw.replace(/\/+$/, '');
   }
 
   private passwordResetFrontendUrl(token: string): string {
-    const base =
-      this.config.get<string>('FRONTEND_URL')?.trim() || 'http://localhost:3000';
-    return `${base}/creator/reset-password?token=${encodeURIComponent(token)}`;
+    return `${this.frontendOrigin()}/creator/reset-password?token=${encodeURIComponent(token)}`;
   }
 
   private async sendVerificationEmail(
     toEmail: string,
-    token: string,
+    code: string,
     displayName: string,
   ): Promise<void> {
-    const verifyUrl = this.verificationFrontendUrl(token);
     const recipientName = displayName?.trim() || 'Creator';
-    const toAddr = toEmail.trim().toLowerCase();
-    const subject = 'Verify your creator account';
-    const text = `Hi ${recipientName},\n\nVerify your email by opening this link:\n${verifyUrl}\n\nThis link expires in 24 hours.\n`;
-    const html = `<p>Hi ${recipientName},</p><p>Verify your email by clicking the link below:</p><p><a href="${verifyUrl}">${verifyUrl}</a></p><p>This link expires in 24 hours.</p>`;
-    await this.outboundMail.sendTransactional({
-      toEmail: toAddr,
-      toName: recipientName,
-      subject,
-      text,
-      html,
-      devLog: { label: 'verification link', detail: `${toAddr}: ${verifyUrl}` },
-    });
+    await this.outboundMail.sendTransactional(
+      emailOtpMail({
+        toEmail,
+        toName: recipientName,
+        code,
+        role: 'creator',
+      }),
+    );
   }
 
   private async sendPasswordResetEmail(
@@ -518,8 +1026,17 @@ export class CreatorAuthService {
     });
   }
 
-  private serializeCreator(creator: Creator) {
+  private storageKeyFromAvatarInput(raw: string): string | null {
+    const bucket = this.config.get<string>('AWS_S3_BUCKET')?.trim() || '';
+    if (!bucket) return null;
+    return extractStoredS3Key(raw, bucket);
+  }
+
+  private async serializeCreator(creator: Creator) {
     const socials = this.parseSocialLinks(creator.socialLinks);
+    const [avatarUrl] = await Promise.all([
+      this.media.resolveUrl(creator.avatarUrl),
+    ]);
     return {
       id: creator.id,
       email: creator.email,
@@ -528,7 +1045,7 @@ export class CreatorAuthService {
       bio: creator.bio,
       whatIDo: creator.whatIDo,
       packagesSummary: creator.packagesSummary,
-      avatarUrl: creator.avatarUrl,
+      avatarUrl,
       primaryCategory: creator.primaryCategory,
       tiktokUrl: socials.tiktok,
       instagramUrl: socials.instagram,
@@ -536,32 +1053,66 @@ export class CreatorAuthService {
       onboardingComplete: creator.onboardingComplete,
       isActive: creator.isActive,
       supportEnabled: creator.supportEnabled,
+      fanThankYouMessage: creator.fanThankYouMessage,
+      thankYouMessage: creator.fanThankYouMessage,
+      hasPassword: Boolean(creator.password),
+      hasGoogle: Boolean(creator.googleId),
       emailVerifiedAt: creator.emailVerifiedAt,
+      streamVerifiedAt: creator.streamVerifiedAt,
+      streamLinksSubmittedAt: creator.streamLinksSubmittedAt,
+      streamReviewNote: creator.streamReviewNote,
+      streamVerified: Boolean(creator.streamVerifiedAt),
+      streamVerificationStatus: streamVerificationStatus(creator),
       lastLogin: creator.lastLogin,
       createdAt: creator.createdAt,
     };
   }
 
-  private parseSocialLinks(raw: string | null | undefined): {
-    tiktok: string | null;
-    instagram: string | null;
-    youtube: string | null;
-  } {
-    if (!raw) return { tiktok: null, instagram: null, youtube: null };
-    try {
-      const parsed = JSON.parse(raw) as {
-        tiktok?: unknown;
-        instagram?: unknown;
-        youtube?: unknown;
-      };
-      return {
-        tiktok: typeof parsed.tiktok === 'string' ? parsed.tiktok : null,
-        instagram: typeof parsed.instagram === 'string' ? parsed.instagram : null,
-        youtube: typeof parsed.youtube === 'string' ? parsed.youtube : null,
-      };
-    } catch {
-      return { tiktok: null, instagram: null, youtube: null };
+  private reviewInboxEmail(): string | null {
+    const inbox =
+      this.config.get<string>('ADMIN_REVIEW_EMAIL')?.trim() ||
+      this.config.get<string>('EMAIL_REPLY_TO')?.trim() ||
+      '';
+    return inbox || null;
+  }
+
+  private notifyStreamLinksSubmitted(
+    creator: Creator,
+    links: { tiktok: string | null; instagram: string | null; youtube: string | null },
+  ) {
+    const name = creator.displayName?.trim() || 'Streamer';
+    const tiktok = links.tiktok || '(none)';
+    const youtube = links.youtube || '(none)';
+    const instagram = links.instagram || '(none)';
+    this.outboundMail.sendInBackground({
+      toEmail: creator.email,
+      toName: name,
+      subject: 'We received your streaming links',
+      text: `Hi ${name},\n\nThanks for submitting your streaming channels. An admin will review your TikTok or YouTube link and email you when you can generate OBS overlays.\n\nTikTok: ${tiktok}\nYouTube: ${youtube}\nInstagram: ${instagram}\n\nYou will get another email when the review is complete.\n`,
+      html: `<p>Hi ${name},</p><p>Thanks for submitting your streaming channels. An admin will review your TikTok or YouTube link and email you when you can generate OBS overlays.</p><p>TikTok: ${tiktok}<br/>YouTube: ${youtube}<br/>Instagram: ${instagram}</p><p>You will get another email when the review is complete.</p>`,
+      devLog: {
+        label: 'stream links submitted (creator)',
+        detail: creator.email,
+      },
+    });
+    const inbox = this.reviewInboxEmail();
+    if (inbox && inbox.toLowerCase() !== creator.email.trim().toLowerCase()) {
+      this.outboundMail.sendInBackground({
+        toEmail: inbox,
+        toName: 'Makulutu admin',
+        subject: `Review streamer channels: ${name} (@${creator.slug})`,
+        text: `${name} (${creator.email}) submitted streaming links for admin review.\n\nPublic page: /${creator.slug}\nTikTok: ${tiktok}\nYouTube: ${youtube}\nInstagram: ${instagram}\n\nApprove or reject in the admin dashboard (Streamers tab).\n`,
+        html: `<p><strong>${name}</strong> (${creator.email}) submitted streaming links for admin review.</p><p>Public page: /${creator.slug}</p><p>TikTok: ${tiktok}<br/>YouTube: ${youtube}<br/>Instagram: ${instagram}</p><p>Approve or reject in the admin dashboard (Streamers tab).</p>`,
+        devLog: {
+          label: 'stream links submitted (admin)',
+          detail: inbox,
+        },
+      });
     }
+  }
+
+  private parseSocialLinks(raw: string | null | undefined) {
+    return parseSocialLinksJson(raw);
   }
 
   private stringifySocialLinks(input: {

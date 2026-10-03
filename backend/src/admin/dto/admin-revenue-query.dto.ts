@@ -1,13 +1,18 @@
 import { Transform } from 'class-transformer';
 import { IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
-const PRESETS = ['today', 'yesterday', 'last7', 'last30', 'custom'] as const;
+const PRESETS = ['today', 'yesterday', 'thisWeek', 'last7', 'last30', 'custom'] as const;
+
+function normalizeRevenuePreset(value: unknown) {
+  if (typeof value !== 'string') return value;
+  const lower = value.trim().toLowerCase();
+  if (lower === 'thisweek') return 'thisWeek';
+  return lower;
+}
 
 export class AdminRevenueQueryDto {
   @IsOptional()
-  @Transform(({ value }) =>
-    typeof value === 'string' ? value.trim().toLowerCase() : value,
-  )
+  @Transform(({ value }) => normalizeRevenuePreset(value))
   @IsIn([...PRESETS])
   preset?: (typeof PRESETS)[number];
 

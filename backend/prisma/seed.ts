@@ -6,6 +6,7 @@ import {
   PrismaClient,
   SubscriptionStatus,
   PayoutRequestStatus,
+  ScheduledLiveStatus,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
@@ -92,7 +93,12 @@ async function seedDetailedTenantDemo(
     const u = demoUsers[i];
     const phone = mobileFor(i + 1);
     const row = await prisma.user.upsert({
-      where: { tiktokUsername: u.tiktokUsername },
+      where: {
+        tiktokUsername_creatorId: {
+          tiktokUsername: u.tiktokUsername,
+          creatorId: baseCreator.id,
+        },
+      },
       update: {
         name: u.name,
         mpesaMobile: phone,
@@ -121,22 +127,32 @@ async function seedDetailedTenantDemo(
     return row.id;
   };
 
-  async function getOrCreateReward(name: string, data: {
-    description: string | null;
-    amountKes: number;
-    alertBannerLabel: string;
-    ttsScript: string | null;
-    allowSupporterMessage: boolean;
-    allowVideoClip: boolean;
-    maxMessageLength: number;
-    active: boolean;
-    sortOrder: number;
-    accentColor?: string | null;
-  }) {
+  async function getOrCreateReward(
+    name: string,
+    data: {
+      description: string | null;
+      amountKes: number;
+      alertBannerLabel: string;
+      ttsScript: string | null;
+      allowSupporterMessage: boolean;
+      allowVideoClip: boolean;
+      maxMessageLength: number;
+      active: boolean;
+      sortOrder: number;
+      accentColor?: string | null;
+    },
+    aliases: string[] = [],
+  ) {
     const existing = await prisma.creatorReward.findFirst({
-      where: { creatorId: baseCreator.id, name },
+      where: { creatorId: baseCreator.id, name: { in: [name, ...aliases] } },
     });
-    if (existing) return existing;
+    if (existing) {
+      await prisma.creatorReward.update({
+        where: { id: existing.id },
+        data: { name, ...data },
+      });
+      return existing;
+    }
     const row = await prisma.creatorReward.create({
       data: {
         creatorId: baseCreator.id,
@@ -148,46 +164,58 @@ async function seedDetailedTenantDemo(
     return row;
   }
 
-  const rewardVip = await getOrCreateReward('VIP Goal Shout', {
-    description: 'Custom shoutout + goal replay reaction on stream.',
-    amountKes: 500,
-    alertBannerLabel: 'VIP TIER!',
-    ttsScript:
-      'Huge respect to {{displayName}} for {{rewardName}}. {{message}}',
-    allowSupporterMessage: true,
-    allowVideoClip: true,
-    maxMessageLength: 180,
-    active: true,
-    sortOrder: 0,
-    accentColor: '#F59E0B',
-  });
+  const rewardVip = await getOrCreateReward(
+    'Matchday VIP',
+    {
+      description: 'Personal shout on stream plus a goal-replay reaction.',
+      amountKes: 500,
+      alertBannerLabel: 'VIP!',
+      ttsScript:
+        'Huge respect to {{displayName}} for {{rewardName}}. {{message}}',
+      allowSupporterMessage: true,
+      allowVideoClip: true,
+      maxMessageLength: 180,
+      active: true,
+      sortOrder: 0,
+      accentColor: '#F59E0B',
+    },
+    ['VIP Goal Shout'],
+  );
 
-  const rewardHype = await getOrCreateReward('Hype Train', {
-    description: 'Short, high-energy on-stream alert.',
-    amountKes: 200,
-    alertBannerLabel: 'HYPE!',
-    ttsScript: '{{displayName}} just fuelled the hype train!',
-    allowSupporterMessage: true,
-    allowVideoClip: false,
-    maxMessageLength: 120,
-    active: true,
-    sortOrder: 1,
-    accentColor: '#22D3EE',
-  });
+  const rewardHype = await getOrCreateReward(
+    'Squad hype',
+    {
+      description: 'A short on-stream boost while the creator is live.',
+      amountKes: 200,
+      alertBannerLabel: 'HYPE!',
+      ttsScript: '{{displayName}} just fuelled the squad!',
+      allowSupporterMessage: true,
+      allowVideoClip: false,
+      maxMessageLength: 120,
+      active: true,
+      sortOrder: 1,
+      accentColor: '#22D3EE',
+    },
+    ['Hype Train'],
+  );
 
-  const rewardLab = await getOrCreateReward('Tactical Lab', {
-    description: 'Offline squad + tactics review (patron-style tier).',
-    amountKes: 1500,
-    alertBannerLabel: 'LAB PATRON',
-    ttsScript:
-      'Shoutout to {{displayName}} for backing the Tactical Lab. Class act.',
-    allowSupporterMessage: true,
-    allowVideoClip: true,
-    maxMessageLength: 280,
-    active: true,
-    sortOrder: 2,
-    accentColor: '#A78BFA',
-  });
+  const rewardLab = await getOrCreateReward(
+    'Tactics patron',
+    {
+      description: 'Offline squad and formation review with the coach.',
+      amountKes: 1500,
+      alertBannerLabel: 'LAB',
+      ttsScript:
+        'Shoutout to {{displayName}} for backing tactics lab. Class act.',
+      allowSupporterMessage: true,
+      allowVideoClip: true,
+      maxMessageLength: 280,
+      active: true,
+      sortOrder: 2,
+      accentColor: '#A78BFA',
+    },
+    ['Tactical Lab'],
+  );
 
   // --- Subscriptions (completed / pending / expired / cancelled) ---
   if (!(await hasPaymentRef(R('SUB_001')))) {
@@ -821,13 +849,15 @@ async function seedDetailedTenantDemo(
 }
 
 async function main() {
-  console.log('🌱 Seeding database...');
+  console.log('🌱 Seeding database (test / full demo)…');
 
-  // Platform operator (not a creator). Override with ADMIN_USERNAME in .env.
   const adminUsername = process.env.ADMIN_USERNAME || 'makulutu';
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@example.com';
-  const adminPassword = process.env.ADMIN_PASSWORD || 'CillianMurphy!@#';
-  /** Legacy seeded name — rename in-place so ids/passwords are preserved */
+  const adminEmail = (
+    process.env.ADMIN_EMAIL || 'admin@example.com'
+  )
+    .trim()
+    .toLowerCase();
+  const adminPassword = process.env.ADMIN_PASSWORD?.trim() || 'CillianMurphy!@#';
   const legacySuperAdminUsername =
     process.env.ADMIN_LEGACY_USERNAME || 'admin';
 
@@ -960,7 +990,7 @@ async function main() {
 
     const bySlug = await prisma.creator.findUnique({
       where: { slug },
-      select: { id: true, email: true, displayName: true },
+      select: { id: true, email: true, displayName: true, streamVerifiedAt: true },
     });
 
     if (bySlug) {
@@ -980,6 +1010,7 @@ async function main() {
           password: superAdmin.password,
           displayName: (bySlug.displayName || '').trim() || displayName,
           onboardingComplete: true,
+          streamVerifiedAt: bySlug.streamVerifiedAt ?? new Date(),
           ...(adminEmail && !emailTakenByOther ? { email: adminEmail } : {}),
         },
       });
@@ -1000,6 +1031,7 @@ async function main() {
           slug,
           displayName,
           onboardingComplete: true,
+          streamVerifiedAt: new Date(),
         },
       });
       console.log(`✅ Creator /${slug} created from super admin`);
@@ -1071,9 +1103,20 @@ async function main() {
     console.log('✅ Default platform_fee_percent = 10 (per-payment fee in admin / creator wallet)');
     created++;
   }
+  const extraFinance = [
+    { key: 'settlement_period_hours', value: '24' },
+    { key: 'min_withdrawal_kes', value: '500' },
+    { key: 'withdrawal_fee_kes', value: '0' },
+  ];
+  for (const row of extraFinance) {
+    if (!(await prisma.settings.findUnique({ where: { key: row.key } }))) {
+      await prisma.settings.create({ data: row });
+      console.log(`✅ Default ${row.key} = ${row.value}`);
+      created++;
+    }
+  }
 
   // Demo operational data (users / payments / subs / shoutouts / coaching / rewards / payouts / OBS).
-  // Idempotent per reference — safe to re-run; adds missing rows only. No extra creators.
   const demoRefPrefix = 'SEED_DEMO_';
   const baseCreator = await prisma.creator.findFirst({
     where: { isActive: true },
@@ -1090,6 +1133,25 @@ async function main() {
       demoRefPrefix,
     );
     created += demoAdds;
+    const existingLive = await prisma.scheduledLive.findFirst({
+      where: { creatorId: baseCreator.id, title: 'Friday ranked grind' },
+      select: { id: true },
+    });
+    if (!existingLive) {
+      await prisma.scheduledLive.create({
+        data: {
+          creatorId: baseCreator.id,
+          title: 'Friday ranked grind',
+          description: 'eFootball live — ranked, shoutouts, and chat.',
+          platform: 'tiktok',
+          startsAt: new Date(Date.now() + 26 * 60 * 60 * 1000),
+          streamUrl: null,
+          status: ScheduledLiveStatus.SCHEDULED,
+        },
+      });
+      created += 1;
+      console.log('✅ Seeded a demo upcoming live for the first creator');
+    }
   }
 
   if (created === 0) {

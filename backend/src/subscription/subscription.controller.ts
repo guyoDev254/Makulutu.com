@@ -8,6 +8,8 @@ import {
   Delete,
   Query,
   Logger,
+  ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { SubscriptionService } from './subscription.service';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
@@ -17,6 +19,7 @@ import { PaymentService } from '../payment/payment.service';
 import { UserService } from '../user/user.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveDefaultCreatorId } from '../common/utils/default-creator';
+import { parseCheckoutCountry } from '../common/utils/checkout-country';
 import {
   fetchCreatorWorkspacePatch,
   mergeWorkspaceMonthlyPrice,
@@ -59,36 +62,43 @@ export class SubscriptionController {
     // Check if user already exists
     let user = await this.userService.findByTikTokUsername(
       registerDto.tiktokUsername,
+      defaultCreatorId,
     );
 
     if (!user) {
-      // Create new user
       user = await this.userService.create({
         name: registerDto.name,
         tiktokUsername: registerDto.tiktokUsername,
-        mpesaMobile: registerDto.mpesaMobile,
-        whatsappNumber: registerDto.whatsappNumber,
+        ...(registerDto.mpesaMobile
+          ? { mpesaMobile: registerDto.mpesaMobile }
+          : {}),
+        ...(registerDto.whatsappNumber
+          ? { whatsappNumber: registerDto.whatsappNumber }
+          : {}),
         ...(defaultCreatorId ? { creatorId: defaultCreatorId } : {}),
       });
     } else {
-      // User exists - update phone numbers if they're different
-      // This ensures STK Push goes to the correct phone number
       const needsUpdate =
-        user.mpesaMobile !== registerDto.mpesaMobile ||
-        user.whatsappNumber !== registerDto.whatsappNumber ||
+        (!!registerDto.mpesaMobile &&
+          user.mpesaMobile !== registerDto.mpesaMobile) ||
+        (!!registerDto.whatsappNumber &&
+          user.whatsappNumber !== registerDto.whatsappNumber) ||
         user.name !== registerDto.name;
 
-      const needsCreator =
-        !user.creatorId && defaultCreatorId;
+      const needsCreator = !user.creatorId && defaultCreatorId;
 
       if (needsUpdate || needsCreator) {
         this.logger.log(
-          `Updating user ${user.tiktokUsername} phone numbers: M-Pesa ${user.mpesaMobile} -> ${registerDto.mpesaMobile}, WhatsApp ${user.whatsappNumber} -> ${registerDto.whatsappNumber}`,
+          `Updating user ${user.tiktokUsername} checkout details`,
         );
         user = await this.userService.update(user.id, {
           name: registerDto.name,
-          mpesaMobile: registerDto.mpesaMobile,
-          whatsappNumber: registerDto.whatsappNumber,
+          ...(registerDto.mpesaMobile
+            ? { mpesaMobile: registerDto.mpesaMobile }
+            : {}),
+          ...(registerDto.whatsappNumber
+            ? { whatsappNumber: registerDto.whatsappNumber }
+            : {}),
           ...(needsCreator && defaultCreatorId
             ? { creatorId: defaultCreatorId }
             : {}),
@@ -106,6 +116,12 @@ export class SubscriptionController {
     }
     const amount = monthlyPrice * registerDto.months;
     const payMethod = (registerDto.paymentMethod || 'mpesa').toLowerCase();
+    const checkoutCountry = parseCheckoutCountry(registerDto.checkoutCountry);
+    if (payMethod === 'mpesa' && checkoutCountry !== 'KE') {
+      throw new BadRequestException(
+        'M-Pesa is only available when Kenya is selected',
+      );
+    }
 
     if (payMethod === 'paypal') {
       const { payment, approvalUrl } =
@@ -115,6 +131,7 @@ export class SubscriptionController {
           amount,
           months: registerDto.months,
           reference: `SUB_${user.id}_${Date.now()}`,
+          checkoutCountry,
         });
       return {
         user,
@@ -124,12 +141,38 @@ export class SubscriptionController {
       };
     }
 
+    if (payMethod === 'paystack') {
+      const email = registerDto.email?.trim();
+      if (!email) {
+        throw new BadRequestException(
+          'Enter the email Paystack should send the receipt to',
+        );
+      }
+      const { payment, approvalUrl } =
+        await this.paymentService.createSubscriptionPaystackCheckout({
+          userId: user.id,
+          creatorId: defaultCreatorId ?? undefined,
+          amount,
+          months: registerDto.months,
+          reference: `SUB_${user.id}_${Date.now()}`,
+          email,
+          checkoutCountry,
+        });
+      return {
+        user,
+        payment,
+        approvalUrl,
+        message: 'Continue to Paystack to complete payment.',
+      };
+    }
+
     const payment = await this.paymentService.create({
       userId: user.id,
       creatorId: defaultCreatorId ?? undefined,
       amount,
       months: registerDto.months,
       reference: `SUB_${user.id}_${Date.now()}`,
+      checkoutCountry,
     });
 
     return {
@@ -190,13 +233,13 @@ export class SubscriptionController {
   }
 
   @Get('user/:userId')
-  findByUser(@Param('userId') userId: string) {
-    return this.subscriptionService.findByUser(userId);
+  findByUser() {
+    throw new ForbiddenException('Use /fan-portal/memberships or /admin/subscriptions');
   }
 
   @Get('user/:userId/active')
-  findActiveByUser(@Param('userId') userId: string) {
-    return this.subscriptionService.findActiveByUser(userId);
+  findActiveByUser() {
+    throw new ForbiddenException('Use /fan-portal/memberships or /admin/subscriptions');
   }
 
   @Get(':id')

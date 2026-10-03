@@ -1,4 +1,5 @@
 import {
+  IsEmail,
   IsIn,
   IsNotEmpty,
   IsNumber,
@@ -8,6 +9,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import {
   MAX_STREAM_ALERT_MESSAGE_LENGTH,
@@ -20,12 +22,14 @@ export class CheckoutStreamAlertDto {
   @MaxLength(64)
   displayHandle: string;
 
+  /** Required for Kenyan M-Pesa STK. Optional for Paystack hosted checkout. */
+  @ValidateIf((o) => (o.paymentMethod || 'mpesa') === 'mpesa')
   @IsString()
   @IsNotEmpty()
   @Matches(/^(254|0)[0-9]{9}$/, {
     message: 'M-Pesa number must be 254XXXXXXXXX or 0XXXXXXXXX',
   })
-  mpesaMobile: string;
+  mpesaMobile?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -56,4 +60,13 @@ export class CheckoutStreamAlertDto {
     message: 'creatorSlug must be lowercase letters, numbers, or hyphens',
   })
   creatorSlug?: string;
+
+  /** `mpesa` (default): STK. `paystack`: hosted card / international checkout in KES. */
+  @IsOptional()
+  @IsIn(['mpesa', 'paystack'])
+  paymentMethod?: 'mpesa' | 'paystack';
+
+  @ValidateIf((o) => o.paymentMethod === 'paystack')
+  @IsEmail()
+  email?: string;
 }

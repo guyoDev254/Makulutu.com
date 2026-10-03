@@ -26,6 +26,6 @@ export function payoutProcessingScheduleMeta() {
     weekday: 'Wednesday',
     hourLocal: PAYOUT_REMINDER_HOUR,
     summary:
-      'Creator payouts are reviewed on a weekly rhythm: super admins process bank/M-Pesa payouts every Wednesday after approving requests in the Payouts tab.',
+      'Creator payouts are reviewed weekly: approve requests, download the approved M-Pesa CSV batch from Payouts, send the transfers, then mark each row as paid. Creators are emailed and WhatsApped on request, approval, and payment.',
   };
 }

@@ -1,33 +1,28 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { BadRequestException, ValidationPipe, Logger } from '@nestjs/common';
+import { join } from 'path';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import helmet from 'helmet';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
   const logger = new Logger('Bootstrap');
   const validationLogger = new Logger('ValidationPipe');
 
   // Ensure Prisma disconnects on shutdown so connections are released
   app.enableShutdownHooks();
-  
-  // Security headers (install helmet: yarn add helmet)
-  // Uncomment after installing helmet:
-  /*
-  const helmet = require('helmet');
-  app.use(helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        scriptSrc: ["'self'"],
-        imgSrc: ["'self'", "data:", "https:"],
-      },
-    },
-    crossOriginEmbedderPolicy: false,
-  }));
-  */
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
 
   // CORS: allow dev (localhost:3000) and production frontend(s) from env
   const corsOrigins = process.env.CORS_ORIGINS
@@ -39,6 +34,8 @@ async function bootstrap() {
     'http://localhost:3001',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
+    'http://localhost:8081',
+    'http://127.0.0.1:8081',
   ];
   const origins = [...new Set([...defaultOrigins, ...corsOrigins])];
   app.enableCors({
@@ -77,6 +74,14 @@ async function bootstrap() {
 
   // Global logging interceptor
   app.useGlobalInterceptors(new LoggingInterceptor());
+
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
+    prefix: '/uploads/',
+    setHeaders: (res) => {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  });
 
   const port = process.env.PORT || 2000;
   await app.listen(port);

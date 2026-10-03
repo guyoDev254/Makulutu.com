@@ -5,6 +5,8 @@ import { AdminRole, PayoutRequestStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { OutboundMailService } from '../mail/outbound-mail.service';
+import { FanNotifyService } from '../fan-portal/fan-notify.service';
+import { FinanceService } from '../finance/finance.service';
 import {
   PAYOUT_REMINDER_HOUR,
   PAYOUT_REMINDER_WEEKDAY,
@@ -19,7 +21,23 @@ export class TasksService {
     private readonly prisma: PrismaService,
     private readonly outboundMail: OutboundMailService,
     private readonly config: ConfigService,
+    private readonly fanNotify: FanNotifyService,
+    private readonly finance: FinanceService,
   ) {}
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async settleCreatorEarnings() {
+    try {
+      const n = await this.finance.settleDuePayments();
+      if (n > 0) {
+        this.logger.log(`Settled ${n} creator earning(s)`);
+      }
+    } catch (e) {
+      this.logger.error(
+        `Settlement worker failed: ${e instanceof Error ? e.message : e}`,
+      );
+    }
+  }
 
   /**
    * Check and expire subscriptions daily at midnight
@@ -28,6 +46,7 @@ export class TasksService {
   async handleExpiredSubscriptions() {
     this.logger.log('Checking for expired subscriptions...');
     await this.subscriptionService.checkAndExpireSubscriptions();
+    await this.fanNotify.membershipExpiringSoon();
     this.logger.log('Expired subscriptions check completed');
   }
 
@@ -80,7 +99,7 @@ export class TasksService {
     const text =
       count === 0
         ? `Wednesday payout reminder: there are no pending creator payout requests right now.\n\nWhen requests arrive, review them in the admin dashboard → Payouts tab, then complete bank/M-Pesa transfers and mark each as paid.\n\nOpen dashboard: ${baseUrl}${adminPath}\n`
-        : `Wednesday payout reminder: ${count} pending creator payout request(s). Please review in Admin → Payouts, send funds, then mark approved items as paid.\n\n${lines.join('\n')}\n\nDashboard: ${baseUrl}${adminPath}\n`;
+        : `Wednesday payout reminder: ${count} pending creator payout request(s). Please review in Admin → Payouts, export the approved M-Pesa CSV batch, send funds, then mark items as paid.\n\n${lines.join('\n')}\n\nDashboard: ${baseUrl}${adminPath}\n`;
 
     const rows =
       count === 0
@@ -110,7 +129,8 @@ export class TasksService {
 <ol>
 <li>Open <a href="${baseUrl}${adminPath}">admin dashboard</a> → <strong>Payouts</strong>.</li>
 <li>Approve or reject new requests as needed.</li>
-<li>Send M-Pesa/bank payouts for approved rows, then mark each as <strong>Paid</strong> with the payout reference.</li>
+<li>Click <strong>Export approved batch</strong> to download the M-Pesa CSV (phone, amount, payee).</li>
+<li>Send the transfers, then mark each row as <strong>Paid</strong> with the payout reference. Creators are notified by email/WhatsApp automatically.</li>
 </ol>
 ${rows}
 <p style="margin-top:16px;color:#666;font-size:13px;">This is an automated reminder (Wednesdays). Adjust schedule in code/env if needed.</p>`;
@@ -132,16 +152,21 @@ ${rows}
         : `Weekly payout reminder — ${count} pending request(s)`;
 
     for (const toEmail of recipients) {
-      await this.outboundMail.sendTransactional({
-        toEmail,
-        subject,
-        text,
-        html,
-        devLog: {
-          label: 'weekly payout reminder',
-          detail: `${toEmail}: ${count} pending (see logs)`,
-        },
-      });
+      try {
+        await this.outboundMail.sendTransactional({
+          toEmail,
+          subject,
+          text,
+          html,
+          devLog: {
+            label: 'weekly payout reminder',
+            detail: `${toEmail}: ${count} pending (see logs)`,
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Payout reminder email failed for ${toEmail}: ${message}`);
+      }
     }
   }
 }

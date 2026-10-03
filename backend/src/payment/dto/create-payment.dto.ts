@@ -20,4 +20,8 @@ export class CreatePaymentDto {
   @IsOptional()
   @IsUUID()
   creatorId?: string;
+
+  @IsOptional()
+  @IsString()
+  checkoutCountry?: string;
 }

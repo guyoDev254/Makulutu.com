@@ -10,15 +10,22 @@ services:
       - NODE_ENV=development
       - PORT=2000
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/makulutu
-      - JWT_SECRET=${JWT_SECRET:-dev-secret-key}
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
-      - MEGAPAY_API_KEY=${MEGAPAY_API_KEY}
-      - MEGAPAY_MERCHANT_ID=${MEGAPAY_MERCHANT_ID}
-      - MEGAPAY_API_URL=${MEGAPAY_API_URL}
+      - PAYSTACK_SECRET_KEY=${PAYSTACK_SECRET_KEY}
+      - PAYSTACK_CURRENCY=${PAYSTACK_CURRENCY:-KES}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - EMAIL_FROM=${EMAIL_FROM:-no-reply@makulutu.com}
+      - EMAIL_FROM_NAME=${EMAIL_FROM_NAME:-Makulutu}
       - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
       - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
       - WHATSAPP_API_VERSION=${WHATSAPP_API_VERSION:-v22.0}
+      - AWS_REGION=${AWS_REGION:-eu-north-1}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET:-makulutu}
     env_file:
       - .env
     volumes:

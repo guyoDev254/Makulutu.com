@@ -11,6 +11,7 @@ import {
   Put,
   Query,
   Req,
+  Res,
   UseGuards,
   NotFoundException,
 } from '@nestjs/common';
@@ -31,12 +32,16 @@ import { AdminStreamShoutoutsQueryDto } from './dto/admin-stream-shoutouts-query
 import { DeleteStreamShoutoutsDto } from './dto/delete-stream-shoutouts.dto';
 import { UpdateCoachingBookingAdminDto } from './dto/update-coaching-booking-admin.dto';
 import { AdminRevenueQueryDto } from './dto/admin-revenue-query.dto';
+import { AdminRevenueTransactionsQueryDto, AdminRevenueChartQueryDto } from './dto/admin-revenue-transactions-query.dto';
+import { RefundPaymentDto } from './dto/refund-payment.dto';
 import { AdminPayoutRequestsQueryDto } from './dto/admin-payout-requests-query.dto';
+import { AdminPayoutExportQueryDto } from './dto/admin-payout-export-query.dto';
 import { ReviewPayoutRequestDto } from './dto/review-payout-request.dto';
 import { CreateCreatorRewardDto } from '../creator-reward/dto/create-creator-reward.dto';
 import { UpdateCreatorRewardDto } from '../creator-reward/dto/update-creator-reward.dto';
 import { UpdateCreatorAdminDto } from './dto/update-creator-admin.dto';
 import { NotifyCreatorEmailDto } from './dto/notify-creator-email.dto';
+import type { Response } from 'express';
 
 const ALL_ROLES = ['MODERATOR', 'ADMIN', 'SUPER_ADMIN'];
 const ADMIN_ONLY = ['ADMIN', 'SUPER_ADMIN'];
@@ -49,8 +54,8 @@ export class AdminController {
 
   @Get('dashboard')
   @Roles(...ALL_ROLES)
-  getDashboard() {
-    return this.adminService.getDashboardStats();
+  getDashboard(@Query() query: AdminRevenueQueryDto) {
+    return this.adminService.getDashboardStats(undefined, query);
   }
 
   @Get('users')
@@ -92,6 +97,15 @@ export class AdminController {
     return this.adminService.notifyCreatorByEmail(id, dto, sender);
   }
 
+  @Get('creators/:id/dashboard')
+  @Roles(...ALL_ROLES)
+  getCreatorDashboard(
+    @Param('id') id: string,
+    @Query() query: AdminRevenueQueryDto,
+  ) {
+    return this.adminService.getDashboardStats(id, query);
+  }
+
   /** Full creator snapshot: related users, payments, payouts, OBS links, etc. (sensitive). */
   @Get('creators/:id/super-profile')
   @Roles(...SUPER_ADMIN_ONLY)
@@ -120,6 +134,12 @@ export class AdminController {
     @Body() updateUserDto: UpdateUserDto,
   ) {
     return await this.adminService.updateUser(id, updateUserDto);
+  }
+
+  @Delete('users/:id')
+  @Roles(...ADMIN_ONLY)
+  async deleteUser(@Param('id') id: string) {
+    return await this.adminService.deleteUser(id);
   }
 
   @Patch('users/:id/whatsapp-confirm')
@@ -165,6 +185,12 @@ export class AdminController {
     @Body() updateSubscriptionDto: UpdateSubscriptionDto,
   ) {
     return await this.adminService.updateSubscription(id, updateSubscriptionDto);
+  }
+
+  @Delete('subscriptions/:id')
+  @Roles(...ADMIN_ONLY)
+  async deleteSubscription(@Param('id') id: string) {
+    return await this.adminService.deleteSubscription(id);
   }
 
   @Get('payments')
@@ -214,6 +240,18 @@ export class AdminController {
     return this.adminService.replayPaymentObsAlert(id);
   }
 
+  @Post('payments/:id/refund')
+  @HttpCode(200)
+  @Roles(...ADMIN_ONLY)
+  refundPayment(
+    @Req() req: { user?: { username?: string; role?: string } },
+    @Param('id') id: string,
+    @Body() body: RefundPaymentDto,
+  ) {
+    const actor = req.user?.username || req.user?.role || 'admin';
+    return this.adminService.refundPayment(id, body.reason, actor);
+  }
+
   @Get('payments/:id')
   @Roles(...ALL_ROLES)
   async getPaymentById(@Param('id') id: string) {
@@ -249,11 +287,14 @@ export class AdminController {
   @Roles(...ADMIN_ONLY)
   updateSettings(@Req() req: { user?: { role?: string } }, @Body() updateDto: UpdateSettingsDto) {
     if (
-      updateDto.platformFeePercent !== undefined &&
+      (updateDto.platformFeePercent !== undefined ||
+        updateDto.settlementPeriodHours !== undefined ||
+        updateDto.minWithdrawalKes !== undefined ||
+        updateDto.withdrawalFeeKes !== undefined) &&
       req.user?.role !== 'SUPER_ADMIN'
     ) {
       throw new ForbiddenException(
-        'Only Super Admin can update platform fee percent',
+        'Only Super Admin can update platform fee, settlement, or withdrawal settings',
       );
     }
     return this.adminService.updateSettings(updateDto);
@@ -302,6 +343,30 @@ export class AdminController {
     return this.adminService.getRevenueBreakdown(query);
   }
 
+  @Get('revenue/summary')
+  @Roles(...ALL_ROLES)
+  getRevenueSummary(@Query() query: AdminRevenueQueryDto) {
+    return this.adminService.getRevenueSummary(query);
+  }
+
+  @Get('revenue/transactions')
+  @Roles(...ALL_ROLES)
+  getRevenueTransactions(@Query() query: AdminRevenueTransactionsQueryDto) {
+    return this.adminService.getRevenueTransactions(query);
+  }
+
+  @Get('revenue/chart')
+  @Roles(...ALL_ROLES)
+  getRevenueChart(@Query() query: AdminRevenueChartQueryDto) {
+    return this.adminService.getRevenueChart(query);
+  }
+
+  @Get('settlements')
+  @Roles(...ALL_ROLES)
+  getSettlements(@Query() query: AdminRevenueTransactionsQueryDto) {
+    return this.adminService.getPendingSettlements(query);
+  }
+
   @Get('coaching-bookings')
   @Roles(...ALL_ROLES)
   getCoachingBookings(
@@ -315,6 +380,19 @@ export class AdminController {
   @Roles(...ALL_ROLES)
   getPayoutRequests(@Query() query: AdminPayoutRequestsQueryDto) {
     return this.adminService.listPayoutRequests(query);
+  }
+
+  @Get('payout-requests/export')
+  @Roles(...ADMIN_ONLY)
+  async exportPayoutRequests(
+    @Query() query: AdminPayoutExportQueryDto,
+    @Res() res: Response,
+  ) {
+    const { csv, filename } =
+      await this.adminService.exportPayoutRequestsCsv(query);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(csv);
   }
 
   @Patch('payout-requests/:id')

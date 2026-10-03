@@ -1,61 +1,58 @@
-import { Controller, Post, Get, Body, HttpCode, HttpStatus, Inject, forwardRef } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Inject,
+  Logger,
+  Post,
+  forwardRef,
+} from '@nestjs/common';
 import { MegapayService, WebhookPayload } from './megapay.service';
 import { PaymentService } from '../payment/payment.service';
-import { SubscriptionService } from '../subscription/subscription.service';
 
 @Controller('megapay')
 export class MegapayController {
+  private readonly logger = new Logger(MegapayController.name);
+
   constructor(
     private readonly megapayService: MegapayService,
     @Inject(forwardRef(() => PaymentService))
     private readonly paymentService: PaymentService,
-    private readonly subscriptionService: SubscriptionService,
   ) {}
 
-  /**
-   * Webhook endpoint for MegaPay payment notifications
-   */
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
-  async handleWebhook(@Body() payload: any) {
-    console.log('🔔 Webhook received:', JSON.stringify(payload, null, 2));
-    
-    // Validate webhook payload
+  async handleWebhook(@Body() payload: unknown) {
+    this.logger.log(`Webhook received: ${JSON.stringify(payload)}`);
+
     if (!this.megapayService.validateWebhook(payload)) {
-      console.error('❌ Invalid webhook payload received');
+      this.logger.warn('Invalid MegaPay webhook payload');
       return { status: 'error', message: 'Invalid webhook payload' };
     }
 
     const webhookData = payload as WebhookPayload;
 
     try {
-      // Process successful payment
       if (webhookData.ResponseCode === 0) {
-        console.log(`✅ Processing successful payment: ${webhookData.TransactionID}`);
         await this.paymentService.handleSuccessfulPayment(webhookData);
       } else {
-        console.log(`❌ Processing failed payment: ${webhookData.TransactionID} - ${webhookData.ResponseDescription}`);
-        // Process failed payment
         await this.paymentService.handleFailedPayment(webhookData);
       }
-
-      // Always return 200 to acknowledge receipt
       return { status: 'success', message: 'Webhook processed' };
     } catch (error) {
-      console.error('❌ Error processing webhook:', error);
-      // Still return 200 to prevent MegaPay from retrying
-      return { status: 'error', message: error.message };
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`MegaPay webhook error: ${message}`);
+      return { status: 'error', message };
     }
   }
 
-  /**
-   * Test endpoint to verify webhook URL is accessible
-   */
   @Get('webhook/test')
   testWebhook() {
     return {
       status: 'success',
-      message: 'Webhook endpoint is accessible',
+      message: 'MegaPay webhook endpoint is accessible',
       timestamp: new Date().toISOString(),
       url: '/megapay/webhook',
     };

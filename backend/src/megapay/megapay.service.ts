@@ -1,6 +1,14 @@
 import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
+import axios, { AxiosInstance } from 'axios';
+import { normalizeKenyaMsisdn } from '../common/utils/mpesa-msisdn';
+import {
+  isMegaPayStkAccepted,
+  megaPayReferenceFromPaymentId,
+  megaPayStkErrorMessage,
+  isHostWafBlockMessage,
+  type MegaPayStkBody,
+} from './megapay-stk';
 
 export interface STKPushRequest {
   amount: number;
@@ -46,104 +54,111 @@ export class MegapayService {
   private readonly apiKey: string;
   private readonly email: string;
   private readonly baseUrl: string;
-  private readonly callbackUrl: string;
+  private readonly http: AxiosInstance;
 
   constructor(private configService: ConfigService) {
-    this.apiKey = this.configService.get<string>('MEGAPAY_API_KEY');
-    this.email = this.configService.get<string>('MEGAPAY_EMAIL');
-    this.baseUrl = this.configService.get<string>('MEGAPAY_BASE_URL') || 'https://megapay.co.ke/backend/v1';
-    
-    // Construct callback URL for webhook notifications
-    // Priority: NGROK_URL > WEBHOOK_BASE_URL > BASE_URL > localhost
-    // Note: Remove any trailing slashes and trim whitespace
-    const ngrokUrl = this.configService.get<string>('NGROK_URL')?.trim();
-    const webhookBaseUrlRaw = ngrokUrl || 
-                          this.configService.get<string>('WEBHOOK_BASE_URL')?.trim() || 
-                          this.configService.get<string>('BASE_URL')?.trim() || 
-                          'http://localhost:3001';
-    
-    // Remove trailing slash if present
-    const webhookBaseUrl = webhookBaseUrlRaw.replace(/\/$/, '');
-    this.callbackUrl = `${webhookBaseUrl}/megapay/webhook`;
+    this.apiKey = this.configService.get<string>('MEGAPAY_API_KEY')?.trim() || '';
+    this.email = this.configService.get<string>('MEGAPAY_EMAIL')?.trim() || '';
+    this.baseUrl = (
+      this.configService.get<string>('MEGAPAY_BASE_URL')?.trim() ||
+      'https://megapay.co.ke/backend/v1'
+    ).replace(/\/+$/, '');
+
+    const userAgent =
+      this.configService.get<string>('MEGAPAY_HTTP_USER_AGENT')?.trim() ||
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+    this.http = axios.create({
+      baseURL: this.baseUrl,
+      timeout: 25000,
+      headers: {
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Language': 'en-KE,en;q=0.9',
+        'Content-Type': 'application/json',
+        'User-Agent': userAgent,
+      },
+    });
 
     if (!this.apiKey || !this.email) {
       this.logger.warn('MegaPay API credentials not configured');
     }
-    
-    if (ngrokUrl) {
-      this.logger.log(`✅ Using ngrok for webhook: ${this.callbackUrl}`);
-    } else {
-      this.logger.log(`MegaPay callback URL configured: ${this.callbackUrl}`);
-    }
-    
-    // Log warning if using localhost in production-like environment
-    if (this.callbackUrl.includes('localhost') && process.env.NODE_ENV === 'production') {
-      this.logger.warn('⚠️  Warning: Using localhost callback URL in production!');
-    }
   }
 
-  /**
-   * Initiate STK Push to customer's phone
-   */
   async initiateSTKPush(request: STKPushRequest): Promise<STKPushResponse> {
+    this.assertConfigured();
     try {
-      // Format phone number (ensure it starts with 254)
       const formattedPhone = this.formatPhoneNumber(request.msisdn);
+      const amountKes = Math.round(Number(request.amount));
+      if (!Number.isFinite(amountKes) || amountKes < 1) {
+        throw new HttpException(
+          'Payment amount must be at least KES 1',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
 
+      const rawRef = request.reference || `SUB_${Date.now()}`;
       const payload = {
         api_key: this.apiKey,
         email: this.email,
-        amount: request.amount.toString(),
+        amount: String(amountKes),
         msisdn: formattedPhone,
-        reference: request.reference || `SUB_${Date.now()}`,
-        callback_url: this.callbackUrl,
+        reference: /^[0-9a-f-]{36}$/i.test(rawRef)
+          ? megaPayReferenceFromPaymentId(rawRef)
+          : rawRef.slice(0, 32),
       };
 
-      this.logger.log(`Initiating STK Push with callback URL: ${this.callbackUrl}`);
-      this.logger.debug(`STK Push payload: ${JSON.stringify({ ...payload, api_key: '***', email: '***' })}`);
-
-      const response = await axios.post<STKPushResponse>(
-        `${this.baseUrl}/initiatestk`,
-        payload,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        },
+      this.logger.log(
+        `Initiating MegaPay STK Push for ${payload.reference} (${payload.msisdn}, KES ${payload.amount})`,
       );
 
-      if (response.data.success === '200') {
-        this.logger.log(
-          `STK Push initiated successfully: ${response.data.transaction_request_id}`,
-        );
-        return response.data;
+      const response = await this.postStk('/initiatestk', payload);
+
+      const data = response.data;
+      if (isMegaPayStkAccepted(data)) {
+        const transaction_request_id = String(
+          data.transaction_request_id ?? '',
+        ).trim();
+        this.logger.log(`STK Push initiated: ${transaction_request_id}`);
+        return {
+          success: '200',
+          massage: megaPayStkErrorMessage(data, 'Request sent successfully.'),
+          transaction_request_id,
+        };
       }
 
+      this.logger.error(
+        `MegaPay STK rejected: ${JSON.stringify(data)}`,
+      );
       throw new HttpException(
-        'Failed to initiate STK Push',
+        megaPayStkErrorMessage(data),
         HttpStatus.BAD_REQUEST,
       );
     } catch (error) {
-      this.logger.error(`STK Push error: ${error.message}`, error.stack);
-      if (error.response) {
+      if (error instanceof HttpException) throw error;
+      this.logger.error(
+        `STK Push error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      if (axios.isAxiosError(error) && error.response) {
+        const data = error.response.data as MegaPayStkBody;
+        this.logger.error(
+          `MegaPay STK HTTP ${error.response.status} from ${this.baseUrl}: ${JSON.stringify(data)}`,
+        );
         throw new HttpException(
-          error.response.data || 'STK Push failed',
-          error.response.status || HttpStatus.BAD_REQUEST,
+          megaPayStkErrorMessage(data, 'STK Push failed'),
+          this.stkFailureHttpStatus(error.response.status, data),
         );
       }
       throw new HttpException(
-        'Failed to initiate STK Push',
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        'Could not reach MegaPay. Try again in a moment.',
+        HttpStatus.BAD_GATEWAY,
       );
     }
   }
 
-  /**
-   * Check transaction status
-   */
   async checkTransactionStatus(
     transactionRequestId: string,
   ): Promise<TransactionStatusResponse> {
+    this.assertConfigured();
     try {
       const payload = {
         api_key: this.apiKey,
@@ -151,21 +166,15 @@ export class MegapayService {
         transaction_request_id: transactionRequestId,
       };
 
-      const response = await axios.post<TransactionStatusResponse>(
-        `${this.baseUrl}/transactionstatus`,
+      const response = await this.http.post<TransactionStatusResponse>(
+        '/transactionstatus',
         payload,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        },
       );
 
       return response.data;
     } catch (error) {
       this.logger.error(
-        `Transaction status check error: ${error.message}`,
-        error.stack,
+        `Transaction status check error: ${error instanceof Error ? error.message : String(error)}`,
       );
       throw new HttpException(
         'Failed to check transaction status',
@@ -174,34 +183,65 @@ export class MegapayService {
     }
   }
 
-  /**
-   * Format phone number to 254 format
-   */
-  private formatPhoneNumber(phone: string): string {
-    // Remove any spaces, dashes, or other characters
-    let cleaned = phone.replace(/\D/g, '');
-
-    // If starts with 0, replace with 254
-    if (cleaned.startsWith('0')) {
-      cleaned = '254' + cleaned.substring(1);
+  private async postStk(path: string, payload: object) {
+    try {
+      return await this.http.post<MegaPayStkBody>(path, payload);
+    } catch (error) {
+      if (
+        axios.isAxiosError(error) &&
+        error.response?.status === 403 &&
+        isHostWafBlockMessage(JSON.stringify(error.response.data ?? ''))
+      ) {
+        this.logger.warn(
+          `MegaPay 403 WAF on ${this.baseUrl}${path}; retrying once with the same payload`,
+        );
+        await new Promise((r) => setTimeout(r, 400));
+        return await this.http.post<MegaPayStkBody>(path, payload);
+      }
+      throw error;
     }
-    // If doesn't start with 254, add it
-    else if (!cleaned.startsWith('254')) {
-      cleaned = '254' + cleaned;
-    }
-
-    return cleaned;
   }
 
-  /**
-   * Validate webhook payload
-   */
-  validateWebhook(payload: any): payload is WebhookPayload {
+  private stkFailureHttpStatus(
+    upstreamStatus: number,
+    data: MegaPayStkBody,
+  ): number {
+    const text = JSON.stringify(data);
+    if (upstreamStatus === 403 || isHostWafBlockMessage(text)) {
+      return HttpStatus.BAD_GATEWAY;
+    }
+    return upstreamStatus >= 400 && upstreamStatus < 600
+      ? upstreamStatus
+      : HttpStatus.BAD_REQUEST;
+  }
+
+  private formatPhoneNumber(phone: string): string {
+    const normalized = normalizeKenyaMsisdn(phone);
+    if (!normalized) {
+      throw new HttpException(
+        'Enter a valid Kenyan M-Pesa number',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return normalized;
+  }
+
+  validateWebhook(payload: unknown): payload is WebhookPayload {
+    if (!payload || typeof payload !== 'object') return false;
+    const p = payload as Record<string, unknown>;
     return (
-      payload &&
-      typeof payload.ResponseCode === 'number' &&
-      payload.TransactionID &&
-      (typeof payload.TransactionAmount === 'number' || payload.TransactionAmount !== undefined)
+      typeof p.ResponseCode === 'number' &&
+      Boolean(p.TransactionID) &&
+      p.TransactionAmount !== undefined
     );
+  }
+
+  private assertConfigured() {
+    if (!this.apiKey || !this.email) {
+      throw new HttpException(
+        'MegaPay is not configured',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
   }
 }

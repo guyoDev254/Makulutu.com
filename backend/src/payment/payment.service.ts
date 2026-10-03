@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  HttpException,
   Logger,
   Inject,
   forwardRef,
@@ -16,12 +17,22 @@ import {
   PaymentStatus,
   Prisma,
 } from '@prisma/client';
-import { MegapayService, WebhookPayload } from '../megapay/megapay.service';
+import { WebhookPayload } from '../paystack/paystack.types';
+import { PaystackService } from '../paystack/paystack.service';
 import { PaypalService } from '../paypal/paypal.service';
 import { SubscriptionService } from '../subscription/subscription.service';
 import { UserService } from '../user/user.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { ObsAlertsService } from '../obs-alerts/obs-alerts.service';
+import { FanNotifyService } from '../fan-portal/fan-notify.service';
+import {
+  kenyaMsisdnAliases,
+  normalizeKenyaMsisdn,
+} from '../common/utils/mpesa-msisdn';
+import { paymentIdFromProviderReference } from '../common/utils/payment-id-from-reference';
+import { parseCheckoutCountry } from '../common/utils/checkout-country';
+import { chargeEmailForMsisdn } from '../paystack/paystack.mapper';
+import { logPaystackTest } from '../paystack/paystack-test-log';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { CheckoutStreamAlertDto } from '../stream-alerts/dto/checkout-stream-alert.dto';
 import { CheckoutCoachingBookingDto } from '../coaching-booking/dto/checkout-coaching-booking.dto';
@@ -42,6 +53,8 @@ import {
 } from '../common/utils/coaching-booking-price';
 import { buildPublicSupportCatalog } from '../common/utils/support-catalog';
 import { resolveDefaultCreatorId } from '../common/utils/default-creator';
+import { FinanceService } from '../finance/finance.service';
+import { StorageService } from '../storage/storage.service';
 
 // Type for Payment with user + optional shoutout / coaching / creator reward
 type PaymentWithUser = Prisma.PaymentGetPayload<{
@@ -59,8 +72,8 @@ export class PaymentService {
 
   constructor(
     private prisma: PrismaService,
-    @Inject(forwardRef(() => MegapayService))
-    private megapayService: MegapayService,
+    @Inject(forwardRef(() => PaystackService))
+    private paystackService: PaystackService,
     @Inject(forwardRef(() => SubscriptionService))
     private subscriptionService: SubscriptionService,
     private userService: UserService,
@@ -68,7 +81,154 @@ export class PaymentService {
     private obsAlerts: ObsAlertsService,
     private config: ConfigService,
     private paypalService: PaypalService,
+    private fanNotify: FanNotifyService,
+    private finance: FinanceService,
+    private storage: StorageService,
   ) {}
+
+  /** Kenya M-Pesa STK and card checkout both go through Paystack. */
+  private requirePaystack(): PaystackService {
+    if (!this.paystackService.isConfigured()) {
+      throw new BadRequestException(
+        'Paystack is not configured. Set PAYSTACK_SECRET_KEY on the API.',
+      );
+    }
+    return this.paystackService;
+  }
+
+  private frontendOrigin(): string {
+    return (
+      this.config.get<string>('FRONTEND_URL')?.replace(/\/$/, '') ||
+      'http://localhost:3000'
+    );
+  }
+
+  async startPaystackHostedCheckout(
+    paymentId: string,
+    email: string,
+  ): Promise<string> {
+    if (!this.paystackService.isConfigured()) {
+      throw new BadRequestException(
+        'Paystack is not configured. Set PAYSTACK_SECRET_KEY on the API.',
+      );
+    }
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+    });
+    if (!payment || payment.amount == null) {
+      throw new NotFoundException('Payment not found');
+    }
+    const callbackUrl = `${this.frontendOrigin()}/success?paymentId=${encodeURIComponent(payment.id)}&paystack=1`;
+    const started = await this.paystackService.initializeHostedCheckout({
+      email,
+      amountKes: Number(payment.amount),
+      reference: payment.id,
+      callbackUrl,
+      metadata: {
+        purpose: payment.purpose,
+        creatorId: payment.creatorId,
+      },
+    });
+    await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        paymentMethod: PaymentMethod.PAYSTACK,
+        transactionRequestId: started.reference,
+      },
+    });
+    logPaystackTest({
+      stage: 'hosted_checkout_saved',
+      paymentId: payment.id,
+      purpose: payment.purpose,
+      amountKes: Number(payment.amount),
+      paystackReference: started.reference,
+      callbackUrl,
+    });
+    return started.authorizationUrl;
+  }
+
+  async createSubscriptionPaystackCheckout(params: {
+    userId: string;
+    creatorId?: string;
+    amount: number;
+    months: number;
+    reference: string;
+    email: string;
+    checkoutCountry?: string;
+  }): Promise<{ payment: Payment; approvalUrl: string }> {
+    const savedPayment = await this.prisma.payment.create({
+      data: {
+        userId: params.userId,
+        creatorId: params.creatorId,
+        amount: params.amount,
+        months: params.months,
+        reference: params.reference,
+        purpose: PaymentPurpose.SUBSCRIPTION,
+        status: PaymentStatus.PENDING,
+        paymentMethod: PaymentMethod.PAYSTACK,
+        checkoutCountry: parseCheckoutCountry(params.checkoutCountry),
+      },
+    });
+    const approvalUrl = await this.startPaystackHostedCheckout(
+      savedPayment.id,
+      params.email,
+    );
+    const payment = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: savedPayment.id },
+    });
+    return { payment, approvalUrl };
+  }
+
+  async verifyPaystackReference(reference: string): Promise<Payment> {
+    const ref = reference.trim();
+    if (!ref) {
+      throw new BadRequestException('Missing Paystack reference');
+    }
+    const status = await this.paystackService.checkTransactionStatus(ref);
+    let payment = await this.prisma.payment.findFirst({
+      where: {
+        OR: [{ id: ref }, { transactionRequestId: ref }, { reference: ref }],
+      },
+    });
+    logPaystackTest({
+      stage: 'verify_db',
+      reference: ref,
+      paystackStatus: status.TransactionStatus,
+      paystackDesc: status.ResultDesc,
+      paystackAmount: status.TransactionAmount,
+      dbFound: Boolean(payment),
+      dbPaymentId: payment?.id,
+      dbStatus: payment?.status,
+    });
+    if (!payment) {
+      throw new NotFoundException(
+        `Payment not found for Paystack reference ${ref} (${status.TransactionStatus}: ${status.ResultDesc})`,
+      );
+    }
+    if (status.TransactionStatus === 'Completed' && status.TransactionCode === '0') {
+      await this.handleSuccessfulPayment({
+        ResponseCode: 0,
+        ResponseDescription: status.ResultDesc,
+        TransactionID: status.TransactionID,
+        TransactionAmount: Number(status.TransactionAmount) || Number(payment.amount) || 0,
+        TransactionReceipt: status.TransactionReceipt,
+        TransactionDate: status.TransactionDate,
+        TransactionReference: payment.id,
+        Msisdn: status.Msisdn,
+      });
+      return this.findOne(payment.id);
+    }
+    if (status.TransactionStatus === 'Failed') {
+      await this.handleFailedPayment({
+        ResponseCode: 1,
+        ResponseDescription: status.ResultDesc,
+        TransactionID: status.TransactionID,
+        TransactionAmount: Number(status.TransactionAmount) || 0,
+        TransactionReference: payment.id,
+      });
+    }
+    return this.findOne(payment.id);
+  }
 
   async create(createPaymentDto: CreatePaymentDto): Promise<Payment> {
     const user = await this.userService.findOne(createPaymentDto.userId);
@@ -87,12 +247,16 @@ export class PaymentService {
         reference: createPaymentDto.reference,
         status: PaymentStatus.PENDING,
         paymentMethod: PaymentMethod.MPESA,
+        checkoutCountry: parseCheckoutCountry(createPaymentDto.checkoutCountry),
       },
     });
 
     // Initiate STK Push
     try {
-      const stkResponse = await this.megapayService.initiateSTKPush({
+      if (!user.mpesaMobile) {
+        throw new BadRequestException('Enter a Kenyan M-Pesa number');
+      }
+      const stkResponse = await this.requirePaystack().initiateSTKPush({
         amount: createPaymentDto.amount,
         msisdn: user.mpesaMobile,
         reference: savedPayment.id,
@@ -120,7 +284,7 @@ export class PaymentService {
    */
   async checkoutStreamAlert(
     dto: CheckoutStreamAlertDto,
-  ): Promise<{ payment: Payment; message: string }> {
+  ): Promise<{ payment: Payment; message: string; approvalUrl?: string }> {
     const amount = dto.amount;
 
     const scopedCreatorId = await this.resolvePublicCreatorScopeId(
@@ -163,25 +327,26 @@ export class PaymentService {
       );
     }
 
-    let user = await this.userService.findByMpesaMobileEitherForm(
-      dto.mpesaMobile,
-    );
+    let user = dto.mpesaMobile
+      ? await this.userService.findByMpesaMobileEitherForm(dto.mpesaMobile)
+      : await this.userService.findByTikTokUsername(handle, scopedCreatorId);
+    const payMethod = (dto.paymentMethod || 'mpesa').toLowerCase();
     if (!user) {
-      const normalizedPhone = dto.mpesaMobile.startsWith('254')
-        ? dto.mpesaMobile
-        : `254${dto.mpesaMobile.slice(1)}`;
       const slugBase =
         handle.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 40) || 'viewer';
       let unique = slugBase;
       let n = 0;
-      while (await this.userService.findByTikTokUsername(unique)) {
+      while (await this.userService.findByTikTokUsername(unique, scopedCreatorId)) {
         unique = `${slugBase}_${++n}`;
       }
+      const phone =
+        payMethod === 'mpesa' && dto.mpesaMobile
+          ? this.requireKenyaMsisdn(dto.mpesaMobile)
+          : undefined;
       user = await this.userService.create({
         name: handle.slice(0, 120),
         tiktokUsername: unique,
-        mpesaMobile: normalizedPhone,
-        whatsappNumber: normalizedPhone,
+        ...(phone ? { mpesaMobile: phone, whatsappNumber: phone } : {}),
         ...(scopedCreatorId ? { creatorId: scopedCreatorId } : {}),
       });
     } else if (!user.creatorId && scopedCreatorId) {
@@ -218,7 +383,29 @@ export class PaymentService {
     });
 
     try {
-      const stkResponse = await this.megapayService.initiateSTKPush({
+      if (payMethod === 'paystack') {
+        const email =
+          dto.email?.trim() ||
+          (user.mpesaMobile
+            ? chargeEmailForMsisdn(user.mpesaMobile)
+            : `fan.${user.id.replace(/-/g, '')}@pay.makulutu.com`);
+        const approvalUrl = await this.startPaystackHostedCheckout(
+          savedPayment.id,
+          email,
+        );
+        const payment = await this.prisma.payment.findUniqueOrThrow({
+          where: { id: savedPayment.id },
+        });
+        return {
+          payment,
+          approvalUrl,
+          message: 'Continue to Paystack to complete payment.',
+        };
+      }
+      if (!user.mpesaMobile) {
+        throw new BadRequestException('Enter a Kenyan M-Pesa number');
+      }
+      const stkResponse = await this.requirePaystack().initiateSTKPush({
         amount,
         msisdn: user.mpesaMobile,
         reference: savedPayment.id,
@@ -232,7 +419,7 @@ export class PaymentService {
         message: 'STK Push initiated. Complete payment on your phone.',
       };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = httpClientMessage(error);
       this.logger.error(`Stream alert STK failed: ${msg}`);
       await this.prisma.payment.update({
         where: { id: savedPayment.id },
@@ -241,9 +428,7 @@ export class PaymentService {
           failureReason: msg,
         },
       });
-      throw new BadRequestException(
-        msg || 'Could not start M-Pesa payment. Try again.',
-      );
+      throw new BadRequestException(stkUserFacingError(error));
     }
   }
 
@@ -290,9 +475,7 @@ export class PaymentService {
       dto.mpesaMobile,
     );
     if (!user) {
-      const normalizedPhone = dto.mpesaMobile.startsWith('254')
-        ? dto.mpesaMobile
-        : `254${dto.mpesaMobile.slice(1)}`;
+      const normalizedPhone = this.requireKenyaMsisdn(dto.mpesaMobile);
       const slugBase =
         dto.name
           .trim()
@@ -300,7 +483,7 @@ export class PaymentService {
           .slice(0, 40) || 'booker';
       let unique = slugBase;
       let n = 0;
-      while (await this.userService.findByTikTokUsername(unique)) {
+      while (await this.userService.findByTikTokUsername(unique, targetCreatorId)) {
         unique = `${slugBase}_${++n}`;
       }
       user = await this.userService.create({
@@ -345,7 +528,7 @@ export class PaymentService {
     });
 
     try {
-      const stkResponse = await this.megapayService.initiateSTKPush({
+    const stkResponse = await this.requirePaystack().initiateSTKPush({
         amount,
         msisdn: user.mpesaMobile,
         reference: savedPayment.id,
@@ -359,7 +542,7 @@ export class PaymentService {
         message: `STK Push initiated. Complete KES ${amount} payment on your phone.`,
       };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
+      const msg = httpClientMessage(error);
       this.logger.error(`Coaching booking STK failed: ${msg}`);
       await this.prisma.payment.update({
         where: { id: savedPayment.id },
@@ -368,9 +551,7 @@ export class PaymentService {
           failureReason: msg,
         },
       });
-      throw new BadRequestException(
-        msg || 'Could not start M-Pesa payment. Try again.',
-      );
+      throw new BadRequestException(stkUserFacingError(error));
     }
   }
 
@@ -444,7 +625,7 @@ export class PaymentService {
   async checkoutCreatorReward(
     rewardId: string,
     dto: CheckoutCreatorRewardDto,
-  ): Promise<{ payment: Payment; message: string }> {
+  ): Promise<{ payment: Payment; message: string; approvalUrl?: string }> {
     const reward = await this.prisma.creatorReward.findUnique({
       where: { id: rewardId },
     });
@@ -496,25 +677,26 @@ export class PaymentService {
       }
     }
 
-    let user = await this.userService.findByMpesaMobileEitherForm(
-      dto.mpesaMobile,
-    );
+    let user = dto.mpesaMobile
+      ? await this.userService.findByMpesaMobileEitherForm(dto.mpesaMobile)
+      : await this.userService.findByTikTokUsername(handle, rewardCreatorId);
+    const payMethod = (dto.paymentMethod || 'mpesa').toLowerCase();
     if (!user) {
-      const normalizedPhone = dto.mpesaMobile.startsWith('254')
-        ? dto.mpesaMobile
-        : `254${dto.mpesaMobile.slice(1)}`;
       const slugBase =
         handle.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 40) || 'supporter';
       let unique = slugBase;
       let n = 0;
-      while (await this.userService.findByTikTokUsername(unique)) {
+      while (await this.userService.findByTikTokUsername(unique, rewardCreatorId)) {
         unique = `${slugBase}_${++n}`;
       }
+      const phone =
+        payMethod === 'mpesa' && dto.mpesaMobile
+          ? this.requireKenyaMsisdn(dto.mpesaMobile)
+          : undefined;
       user = await this.userService.create({
         name: handle.slice(0, 120),
         tiktokUsername: unique,
-        mpesaMobile: normalizedPhone,
-        whatsappNumber: normalizedPhone,
+        ...(phone ? { mpesaMobile: phone, whatsappNumber: phone } : {}),
         ...(rewardCreatorId ? { creatorId: rewardCreatorId } : {}),
       });
     } else if (!user.creatorId && rewardCreatorId) {
@@ -568,7 +750,29 @@ export class PaymentService {
     });
 
     try {
-      const stkResponse = await this.megapayService.initiateSTKPush({
+      if (payMethod === 'paystack') {
+        const email =
+          dto.email?.trim() ||
+          (user.mpesaMobile
+            ? chargeEmailForMsisdn(user.mpesaMobile)
+            : `fan.${user.id.replace(/-/g, '')}@pay.makulutu.com`);
+        const approvalUrl = await this.startPaystackHostedCheckout(
+          savedPayment.id,
+          email,
+        );
+        const payment = await this.prisma.payment.findUniqueOrThrow({
+          where: { id: savedPayment.id },
+        });
+        return {
+          payment,
+          approvalUrl,
+          message: 'Continue to Paystack to complete payment.',
+        };
+      }
+      if (!user.mpesaMobile) {
+        throw new BadRequestException('Enter a Kenyan M-Pesa number');
+      }
+      const stkResponse = await this.requirePaystack().initiateSTKPush({
         amount,
         msisdn: user.mpesaMobile,
         reference: savedPayment.id,
@@ -582,7 +786,7 @@ export class PaymentService {
         message: 'STK Push initiated. Complete payment on your phone.',
       };
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
+      const errMsg = httpClientMessage(error);
       this.logger.error(`Creator reward STK failed: ${errMsg}`);
       await this.prisma.payment.update({
         where: { id: savedPayment.id },
@@ -591,9 +795,7 @@ export class PaymentService {
           failureReason: errMsg,
         },
       });
-      throw new BadRequestException(
-        errMsg || 'Could not start M-Pesa payment. Try again.',
-      );
+      throw new BadRequestException(stkUserFacingError(error));
     }
   }
 
@@ -625,6 +827,104 @@ export class PaymentService {
     }
 
     return payment;
+  }
+
+  /** Shape shared by website polling, success page, and mobile PayStatus. */
+  toPublicClientPayment(
+    payment: PaymentWithUser,
+    extra?: {
+      thankYouMessage?: string | null;
+      creator?: {
+        slug: string;
+        displayName: string;
+        avatarUrl: string | null;
+        fanThankYouMessage: string | null;
+        thankYouMessage: string | null;
+      } | null;
+      membership?: {
+        id: string;
+        status: string;
+        months: number | null;
+        endDate: Date | null;
+      } | null;
+    },
+  ) {
+    const amountKes = payment.amount != null ? Number(payment.amount) : null;
+    const statusUpper = String(payment.status || '').toUpperCase();
+    return {
+      id: payment.id,
+      amount: amountKes,
+      amountKes,
+      months: payment.months,
+      purpose: payment.purpose,
+      paymentMethod: payment.paymentMethod,
+      status: statusUpper.toLowerCase(),
+      statusUpper,
+      createdAt: payment.createdAt,
+      completedAt: payment.completedAt,
+      thankYouMessage: extra?.thankYouMessage ?? extra?.creator?.thankYouMessage ?? null,
+      creator: extra?.creator
+        ? {
+            slug: extra.creator.slug,
+            displayName: extra.creator.displayName,
+            avatarUrl: extra.creator.avatarUrl,
+            fanThankYouMessage: extra.creator.fanThankYouMessage,
+            thankYouMessage: extra.creator.thankYouMessage,
+          }
+        : null,
+      membership: extra?.membership ?? null,
+    };
+  }
+
+  async findOneForClient(id: string) {
+    const payment = await this.findOne(id);
+    let creator: {
+      slug: string;
+      displayName: string;
+      avatarUrl: string | null;
+      fanThankYouMessage: string | null;
+      thankYouMessage: string | null;
+    } | null = null;
+    if (payment.creatorId) {
+      const row = await this.prisma.creator.findUnique({
+        where: { id: payment.creatorId },
+        select: {
+          slug: true,
+          displayName: true,
+          avatarUrl: true,
+          fanThankYouMessage: true,
+        },
+      });
+      if (row) {
+        creator = {
+          ...row,
+          avatarUrl: await this.storage.resolveUrl(row.avatarUrl),
+          thankYouMessage: row.fanThankYouMessage,
+        };
+      }
+    }
+    let membership: {
+      id: string;
+      status: string;
+      months: number | null;
+      endDate: Date | null;
+    } | null = null;
+    if (payment.userId) {
+      const sub = await this.prisma.subscription.findFirst({
+        where: {
+          userId: payment.userId,
+          ...(payment.creatorId ? { creatorId: payment.creatorId } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, status: true, months: true, endDate: true },
+      });
+      if (sub) membership = sub;
+    }
+    return this.toPublicClientPayment(payment, {
+      thankYouMessage: creator?.thankYouMessage ?? null,
+      creator,
+      membership,
+    });
   }
 
   /** Public shoutout amount rules (subscribe page + checkout validation). */
@@ -871,6 +1171,7 @@ export class PaymentService {
 
     try {
       await this.dispatchStreamShoutoutObsAlert(payment);
+      void this.fanNotify.shoutoutPlayed(payment.id);
     } catch (err: unknown) {
       await this.prisma.payment.updateMany({
         where: { id: payment.id },
@@ -1062,6 +1363,7 @@ export class PaymentService {
     amount: number;
     months: number;
     reference: string;
+    checkoutCountry?: string;
   }): Promise<{ payment: Payment; approvalUrl: string }> {
     if (!this.paypalService.isConfigured()) {
       throw new BadRequestException(
@@ -1082,6 +1384,7 @@ export class PaymentService {
         purpose: PaymentPurpose.SUBSCRIPTION,
         status: PaymentStatus.PENDING,
         paymentMethod: PaymentMethod.PAYPAL,
+        checkoutCountry: parseCheckoutCountry(params.checkoutCountry),
       },
     });
 
@@ -1170,13 +1473,78 @@ export class PaymentService {
     });
 
     const updated = await this.findOne(pending.id);
+    await this.finance.recordSuccessfulPayment(updated.id);
     await this.dispatchFulfillmentForCompletedPayment(updated);
     return updated;
+  }
+
+  private async ensureGiftRecipientUser(payment: PaymentWithUser) {
+    const phone = String(payment.giftRecipientPhone || '').trim();
+    const creatorId = payment.creatorId;
+    if (!phone || !creatorId) return payment.user;
+    const existing = await this.prisma.user.findFirst({
+      where: {
+        creatorId,
+        OR: [{ mpesaMobile: phone }, { mpesaMobile: `0${phone.slice(3)}` }],
+      },
+    });
+    if (existing) {
+      const fan = await this.prisma.fan.findUnique({ where: { phone } });
+      if (fan && !existing.fanId) {
+        return this.prisma.user.update({
+          where: { id: existing.id },
+          data: { fanId: fan.id },
+        });
+      }
+      return existing;
+    }
+    const name = (payment.giftRecipientName || 'Gifted fan').slice(0, 80);
+    const base =
+      name.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 40) || `gift_${phone.slice(-6)}`;
+    let unique = base;
+    let n = 0;
+    while (
+      await this.prisma.user.findFirst({
+        where: { tiktokUsername: unique, creatorId },
+        select: { id: true },
+      })
+    ) {
+      unique = `${base}_${++n}`;
+    }
+    const fan = await this.prisma.fan.findUnique({ where: { phone } });
+    return this.prisma.user.create({
+      data: {
+        name,
+        tiktokUsername: unique,
+        mpesaMobile: phone,
+        whatsappNumber: phone,
+        creatorId,
+        fanId: fan?.id || null,
+      },
+    });
+  }
+
+  private async linkFanToCheckoutUser(payment: PaymentWithUser): Promise<void> {
+    const user = payment.user;
+    if (!user || user.fanId) return;
+    const phones = kenyaMsisdnAliases(user.mpesaMobile);
+    if (phones.length === 0) return;
+    const fan = await this.prisma.fan.findFirst({
+      where: { isActive: true, phone: { in: phones } },
+      select: { id: true },
+    });
+    if (!fan) return;
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { fanId: fan.id },
+    });
   }
 
   private async dispatchFulfillmentForCompletedPayment(
     updatedPayment: PaymentWithUser,
   ): Promise<void> {
+    await this.linkFanToCheckoutUser(updatedPayment);
+    void this.fanNotify.paymentCompleted(updatedPayment.id);
     if (updatedPayment.purpose === PaymentPurpose.STREAM_ALERT) {
       await this.emitStreamAlertForCompletedPayment(updatedPayment);
       this.logger.log(`Stream alert payment completed: ${updatedPayment.id}`);
@@ -1203,11 +1571,14 @@ export class PaymentService {
       );
     }
     const user = updatedPayment.user;
+    const subUser = updatedPayment.giftRecipientPhone
+      ? await this.ensureGiftRecipientUser(updatedPayment)
+      : user;
 
-    let subscription = await this.subscriptionService.findActiveByUser(user.id);
+    let subscription = await this.subscriptionService.findActiveByUser(subUser.id);
 
     if (!subscription) {
-      subscription = await this.subscriptionService.findLatestByUser(user.id);
+      subscription = await this.subscriptionService.findLatestByUser(subUser.id);
     }
 
     if (subscription) {
@@ -1216,15 +1587,17 @@ export class PaymentService {
         updatedPayment.months,
         parseFloat(updatedPayment.amount.toString()),
         updatedPayment.id,
+        updatedPayment.checkoutCountry,
       );
       await this.emitSubscriberAlertForCompletedPayment(updatedPayment, 'renewal');
     } else {
       await this.subscriptionService.create(
-        user,
+        subUser,
         updatedPayment.months,
         parseFloat(updatedPayment.amount.toString()),
         updatedPayment.id,
         updatedPayment.creatorId,
+        updatedPayment.checkoutCountry,
       );
       await this.emitSubscriberAlertForCompletedPayment(updatedPayment, 'new');
     }
@@ -1249,15 +1622,31 @@ export class PaymentService {
 
     // Try 1: Find by TransactionReference (payment ID)
     if (webhookData.TransactionReference) {
-      payment = await this.prisma.payment.findUnique({
-        where: { id: webhookData.TransactionReference },
-        include: {
+      const paymentId = paymentIdFromProviderReference(
+        webhookData.TransactionReference,
+      );
+      if (paymentId) {
+        payment = await this.prisma.payment.findUnique({
+          where: { id: paymentId },
+          include: {
         user: true,
         streamShoutout: true,
         creatorRewardPurchase: true,
         coachingBookings: true,
       },
-      });
+        });
+      }
+      if (!payment) {
+        payment = await this.prisma.payment.findFirst({
+          where: { transactionRequestId: webhookData.TransactionReference },
+          include: {
+            user: true,
+            streamShoutout: true,
+            creatorRewardPurchase: true,
+            coachingBookings: true,
+          },
+        });
+      }
     }
 
     // Try 2: Find by MerchantRequestID
@@ -1289,7 +1678,12 @@ export class PaymentService {
     // Try 4: Find by TransactionID (if we already stored it)
     if (!payment && webhookData.TransactionID) {
       payment = await this.prisma.payment.findFirst({
-        where: { transactionId: webhookData.TransactionID },
+        where: {
+          OR: [
+            { transactionId: webhookData.TransactionID },
+            { transactionRequestId: webhookData.TransactionID },
+          ],
+        },
         include: {
         user: true,
         streamShoutout: true,
@@ -1308,6 +1702,11 @@ export class PaymentService {
       );
     }
 
+    if (payment.status === PaymentStatus.COMPLETED) {
+      await this.finance.recordSuccessfulPayment(payment.id);
+      return;
+    }
+
     // Update payment status
     await this.prisma.payment.update({
       where: { id: payment.id },
@@ -1322,6 +1721,7 @@ export class PaymentService {
     });
 
     const updatedPayment = await this.findOne(payment.id);
+    await this.finance.recordSuccessfulPayment(updatedPayment.id);
     await this.dispatchFulfillmentForCompletedPayment(updatedPayment);
   }
 
@@ -1334,9 +1734,19 @@ export class PaymentService {
 
     // Try 1: Find by TransactionReference (payment ID)
     if (webhookData.TransactionReference) {
-      payment = await this.prisma.payment.findUnique({
-        where: { id: webhookData.TransactionReference },
-      });
+      const paymentId = paymentIdFromProviderReference(
+        webhookData.TransactionReference,
+      );
+      if (paymentId) {
+        payment = await this.prisma.payment.findUnique({
+          where: { id: paymentId },
+        });
+      }
+      if (!payment) {
+        payment = await this.prisma.payment.findFirst({
+          where: { transactionRequestId: webhookData.TransactionReference },
+        });
+      }
     }
 
     // Try 2: Find by MerchantRequestID
@@ -1356,7 +1766,12 @@ export class PaymentService {
     // Try 4: Find by TransactionID (if we already stored it)
     if (!payment && webhookData.TransactionID) {
       payment = await this.prisma.payment.findFirst({
-        where: { transactionId: webhookData.TransactionID },
+        where: {
+          OR: [
+            { transactionId: webhookData.TransactionID },
+            { transactionRequestId: webhookData.TransactionID },
+          ],
+        },
       });
     }
 
@@ -1384,6 +1799,7 @@ export class PaymentService {
     // If payment is already completed, return it immediately
     if (payment.status === PaymentStatus.COMPLETED) {
       this.logger.log(`Payment ${paymentId} is already completed`);
+      await this.finance.recordSuccessfulPayment(paymentId);
       await this.maybeCatchUpSubscriberObsAlert(paymentId);
       return this.findOne(paymentId);
     }
@@ -1406,11 +1822,11 @@ export class PaymentService {
     }
 
     try {
-      const status = await this.megapayService.checkTransactionStatus(
+      const status = await this.requirePaystack().checkTransactionStatus(
         payment.transactionRequestId,
       );
 
-      this.logger.debug(`MegaPay status check: ${JSON.stringify(status)}`);
+      this.logger.debug(`Mobile-money status check: ${JSON.stringify(status)}`);
 
       if (status.TransactionStatus === 'Completed' && status.TransactionCode === '0') {
         // Payment completed, update payment record
@@ -1423,6 +1839,8 @@ export class PaymentService {
             completedAt: new Date(),
           },
         });
+        await this.finance.recordSuccessfulPayment(payment.id);
+        void this.fanNotify.paymentCompleted(payment.id);
 
         // Non-subscription OBS (shoutout / coaching / reward) must run even when the
         // user relation is missing — same as webhook path.
@@ -1464,6 +1882,7 @@ export class PaymentService {
                 payment.months,
                 parseFloat(payment.amount.toString()),
                 payment.id,
+                payment.checkoutCountry,
               );
               this.logger.log(`Extended subscription for user ${user.id}`);
               const forObs = await this.findOne(payment.id);
@@ -1476,6 +1895,7 @@ export class PaymentService {
                 parseFloat(payment.amount.toString()),
                 payment.id,
                 fullPay.creatorId,
+                fullPay.checkoutCountry,
               );
               this.logger.log(`Created new subscription for user ${user.id}`);
               const forObs = await this.findOne(payment.id);
@@ -1618,4 +2038,32 @@ export class PaymentService {
     if (!lang) return {};
     return { languageCode: lang.slice(0, 20) };
   }
+
+  private requireKenyaMsisdn(raw: string): string {
+    const normalized = normalizeKenyaMsisdn(raw);
+    if (!normalized) {
+      throw new BadRequestException('Enter a valid Kenyan M-Pesa number');
+    }
+    return normalized;
+  }
+}
+
+function httpClientMessage(error: unknown): string {
+  if (error instanceof HttpException) {
+    const res = error.getResponse();
+    if (typeof res === 'string' && res.trim()) return res;
+    if (typeof res === 'object' && res) {
+      const msg = (res as { message?: unknown }).message;
+      if (typeof msg === 'string' && msg.trim()) return msg;
+      if (Array.isArray(msg)) return msg.map(String).join(', ');
+    }
+    return error.message;
+  }
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function stkUserFacingError(error: unknown): string {
+  const msg = httpClientMessage(error);
+  return msg || 'Could not start payment. Try again.';
 }

@@ -1,0 +1,3 @@
+ALTER TABLE "creators" ADD COLUMN IF NOT EXISTS "thumbnail_url" VARCHAR(800);
+ALTER TABLE "creators" ADD COLUMN IF NOT EXISTS "cover_url" VARCHAR(800);
+ALTER TABLE "creators" ALTER COLUMN "avatar_url" TYPE VARCHAR(800);

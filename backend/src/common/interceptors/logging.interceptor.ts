@@ -28,6 +28,17 @@ export class LoggingInterceptor implements NestInterceptor {
           );
         },
         error: (error) => {
+          const path = (url || '').split('?')[0];
+          if (
+            method === 'GET' &&
+            (path === '/json' ||
+              path === '/json/version' ||
+              path === '/json/list' ||
+              path === '/json/protocol' ||
+              /^\/creator-auth\/public\/[^/]*\.[^/]+$/.test(path))
+          ) {
+            return;
+          }
           const delay = Date.now() - now;
           this.logger.error(
             `${method} ${url} - ${delay}ms - ${error.message}`,

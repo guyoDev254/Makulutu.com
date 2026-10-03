@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -24,4 +25,28 @@ export class CreatePayoutRequestDto {
   @IsString()
   @MaxLength(1000)
   notes?: string;
+
+  @IsOptional()
+  @IsIn(['MPESA', 'BANK'])
+  channel?: 'MPESA' | 'BANK';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  bankCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  bankName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  accountNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  accountName?: string;
 }

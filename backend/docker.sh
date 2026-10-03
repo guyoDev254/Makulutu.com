@@ -78,12 +78,17 @@ case $COMMAND in
     ;;
   
   seed)
-    echo "🌱 Seeding database..."
+    echo "🌱 Seeding database (full demo)..."
     docker-compose exec backend yarn prisma:seed
+    ;;
+
+  seed-prod)
+    echo "🌱 Seeding production admin only..."
+    docker-compose exec backend yarn prisma:seed:prod
     ;;
   
   seed-dev)
-    echo "🌱 Seeding database (dev)..."
+    echo "🌱 Seeding database (dev / full demo)..."
     docker-compose -f docker-compose.dev.yml exec backend yarn prisma:seed
     ;;
   
@@ -133,8 +138,9 @@ case $COMMAND in
     echo "  migrate-dev    Run development migrations"
     echo "  generate       Generate Prisma client (production)"
     echo "  generate-dev   Generate Prisma client (development)"
-    echo "  seed           Seed database (production)"
-    echo "  seed-dev       Seed database (development)"
+    echo "  seed           Seed full demo data (test)"
+    echo "  seed-prod      Seed super admin only (production)"
+    echo "  seed-dev       Seed full demo data (dev compose)"
     echo "  restart        Restart production containers"
     echo "  restart-dev    Restart development containers"
     echo "  clean          Remove containers and volumes"

@@ -1,7 +1,7 @@
 # Development Dockerfile for NestJS backend
 # Build for AMD64 architecture
 
-FROM --platform=linux/amd64 node:18-alpine
+FROM --platform=linux/amd64 node:22-alpine
 
 WORKDIR /app
 

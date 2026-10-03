@@ -15,21 +15,25 @@ export class CreateUserDto {
   @IsNotEmpty()
   tiktokUsername: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @Matches(/^(254|0)[0-9]{9}$/, {
     message: 'M-Pesa mobile number must be in format 254XXXXXXXXX or 0XXXXXXXXX',
   })
-  mpesaMobile: string;
+  mpesaMobile?: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @Matches(/^(254|0)[0-9]{9}$/, {
     message: 'WhatsApp number must be in format 254XXXXXXXXX or 0XXXXXXXXX',
   })
-  whatsappNumber: string;
+  whatsappNumber?: string;
 
   @IsOptional()
   @IsUUID()
   creatorId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  fanId?: string;
 }

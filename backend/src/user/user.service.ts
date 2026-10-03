@@ -39,9 +39,15 @@ export class UserService {
     return user;
   }
 
-  async findByTikTokUsername(tiktokUsername: string): Promise<User | null> {
-    return await this.prisma.user.findUnique({
-      where: { tiktokUsername },
+  async findByTikTokUsername(
+    tiktokUsername: string,
+    creatorId?: string | null,
+  ): Promise<User | null> {
+    return await this.prisma.user.findFirst({
+      where: {
+        tiktokUsername,
+        ...(creatorId ? { creatorId } : {}),
+      },
       include: {
         subscriptions: true,
         payments: true,

@@ -54,7 +54,7 @@ export class UpdateCreatorProfileDto {
   @IsOptional()
   @ValidateIf((_, v) => v !== undefined && v !== null)
   @IsString()
-  @MaxLength(500)
+  @MaxLength(800)
   avatarUrl?: string;
 
   @IsOptional()
@@ -75,4 +75,10 @@ export class UpdateCreatorProfileDto {
   @IsOptional()
   @IsBoolean()
   onboardingComplete?: boolean;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== undefined && v !== null)
+  @IsString()
+  @MaxLength(280)
+  fanThankYouMessage?: string;
 }

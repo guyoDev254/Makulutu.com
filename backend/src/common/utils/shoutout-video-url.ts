@@ -2,6 +2,11 @@ import { BadRequestException } from '@nestjs/common';
 
 export const SHOUTOUT_VIDEO_URL_MAX = 500;
 
+/** Compact refs avoid putting https://…tiktok.com in JSON (Imunify360/ModSecurity often blocks those POSTs). */
+const COMPACT_VIDEO = /^tkv:(\d{5,32})$/i;
+const COMPACT_PHOTO = /^tkp:(\d{5,32})$/i;
+const COMPACT_SHORT = /^tks:([A-Za-z0-9_-]{4,32})$/i;
+
 export function isAllowedShoutoutVideoHost(hostname: string): boolean {
   const h = hostname.toLowerCase();
   if (
@@ -16,14 +21,59 @@ export function isAllowedShoutoutVideoHost(hostname: string): boolean {
   return false;
 }
 
+export function expandCompactTikTokClipRef(raw: string): string | null {
+  const trimmed = raw.trim();
+  const video = COMPACT_VIDEO.exec(trimmed);
+  if (video) return `https://www.tiktok.com/video/${video[1]}`;
+  const photo = COMPACT_PHOTO.exec(trimmed);
+  if (photo) return `https://www.tiktok.com/photo/${photo[1]}`;
+  const short = COMPACT_SHORT.exec(trimmed);
+  if (short) return `https://vm.tiktok.com/${short[1]}`;
+  return null;
+}
+
+/** Encode a pasted TikTok URL for API JSON bodies. */
+export function toCompactTikTokClipRef(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const already = expandCompactTikTokClipRef(trimmed);
+  if (already) {
+    const v = already.match(/\/video\/(\d+)/);
+    if (v) return `tkv:${v[1]}`;
+    const p = already.match(/\/photo\/(\d+)/);
+    if (p) return `tkp:${p[1]}`;
+    const s = already.match(/vm\.tiktok\.com\/([A-Za-z0-9_-]+)/i);
+    if (s) return `tks:${s[1]}`;
+  }
+  let u: URL;
+  try {
+    u = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:') return null;
+  if (!isAllowedShoutoutVideoHost(u.hostname)) return null;
+  const video = u.pathname.match(/\/video\/(\d+)/);
+  if (video) return `tkv:${video[1]}`;
+  const photo = u.pathname.match(/\/photo\/(\d+)/);
+  if (photo) return `tkp:${photo[1]}`;
+  const host = u.hostname.toLowerCase();
+  if (host === 'vm.tiktok.com' || host === 'vt.tiktok.com') {
+    const code = u.pathname.replace(/\//g, '').trim();
+    if (/^[A-Za-z0-9_-]{4,32}$/.test(code)) return `tks:${code}`;
+  }
+  return null;
+}
+
 /**
  * TikTok embed iframe `src` from a canonical page URL (https).
  * Returns null if the path does not look like a video/photo post.
  */
 export function computeShoutoutVideoEmbedUrl(pageUrl: string): string | null {
+  const expanded = expandCompactTikTokClipRef(pageUrl) || pageUrl;
   let u: URL;
   try {
-    u = new URL(pageUrl);
+    u = new URL(expanded);
   } catch {
     return null;
   }
@@ -82,9 +132,11 @@ export async function normalizeShoutoutVideoPageUrl(raw: string): Promise<string
   if (trimmed.length > SHOUTOUT_VIDEO_URL_MAX) {
     throw new BadRequestException('Video URL is too long');
   }
+  const fromCompact = expandCompactTikTokClipRef(trimmed);
+  let pageUrl = fromCompact || trimmed;
   let u: URL;
   try {
-    u = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
+    u = new URL(pageUrl.includes('://') ? pageUrl : `https://${pageUrl}`);
   } catch {
     throw new BadRequestException('Invalid video URL');
   }
@@ -95,7 +147,7 @@ export async function normalizeShoutoutVideoPageUrl(raw: string): Promise<string
     throw new BadRequestException('Video link must be from TikTok only');
   }
 
-  let pageUrl = u.toString();
+  pageUrl = u.toString();
   const h = u.hostname.toLowerCase();
   if (h === 'vm.tiktok.com' || h === 'vt.tiktok.com') {
     pageUrl = await expandTikTokShortUrl(pageUrl);

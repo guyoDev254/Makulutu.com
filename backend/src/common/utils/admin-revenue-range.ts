@@ -22,13 +22,38 @@ export function nairobiDayBoundsUtc(ymd: string): { start: Date; end: Date } {
   return { start, end };
 }
 
-function addDaysYmd(ymd: string, deltaDays: number): string {
+export function addDaysYmd(ymd: string, deltaDays: number): string {
   const { start } = nairobiDayBoundsUtc(ymd);
   const t = start.getTime() + deltaDays * 86400000;
   return nairobiYmd(new Date(t));
 }
 
-export type RevenuePreset = 'today' | 'yesterday' | 'last7' | 'last30' | 'custom';
+/** Monday of the Nairobi calendar week containing `ymd`. */
+export function nairobiMondayOfWeek(ymd: string): string {
+  const { start } = nairobiDayBoundsUtc(ymd);
+  const wd = new Intl.DateTimeFormat('en-US', {
+    timeZone: NAIROBI_TZ,
+    weekday: 'short',
+  }).format(start);
+  const fromMonday: Record<string, number> = {
+    Mon: 0,
+    Tue: 1,
+    Wed: 2,
+    Thu: 3,
+    Fri: 4,
+    Sat: 5,
+    Sun: 6,
+  };
+  return addDaysYmd(ymd, -(fromMonday[wd] ?? 0));
+}
+
+export type RevenuePreset =
+  | 'today'
+  | 'yesterday'
+  | 'thisWeek'
+  | 'last7'
+  | 'last30'
+  | 'custom';
 
 export function resolveRevenueRangeNairobi(
   preset: RevenuePreset,
@@ -39,6 +64,8 @@ export function resolveRevenueRangeNairobi(
   switch (preset) {
     case 'yesterday':
       return { fromYmd: addDaysYmd(today, -1), toYmd: addDaysYmd(today, -1) };
+    case 'thisWeek':
+      return { fromYmd: nairobiMondayOfWeek(today), toYmd: today };
     case 'last7':
       return { fromYmd: addDaysYmd(today, -6), toYmd: today };
     case 'last30':
@@ -58,6 +85,18 @@ export function resolveRevenueRangeNairobi(
     default:
       return { fromYmd: today, toYmd: today };
   }
+}
+
+/** Same-length range immediately before `fromYmd` (for period-over-period). */
+export function previousInclusiveRange(
+  fromYmd: string,
+  toYmd: string,
+): { fromYmd: string; toYmd: string } {
+  const days = enumerateNairobiDays(fromYmd, toYmd).length;
+  return {
+    fromYmd: addDaysYmd(fromYmd, -days),
+    toYmd: addDaysYmd(fromYmd, -1),
+  };
 }
 
 export function nairobiRangeToUtcBounds(fromYmd: string, toYmd: string): {

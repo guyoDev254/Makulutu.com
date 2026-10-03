@@ -87,6 +87,27 @@ export class UpdateSettingsDto {
   @Max(100)
   platformFeePercent?: number;
 
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(720)
+  settlementPeriodHours?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(10_000_000)
+  minWithdrawalKes?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(10_000_000)
+  withdrawalFeeKes?: number;
+
   /** Display order on public subscribe: `membership`, `shoutout`, and/or creator reward UUIDs. */
   @IsOptional()
   @IsArray()
