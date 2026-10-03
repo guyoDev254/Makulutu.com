@@ -31,9 +31,9 @@ export interface DashboardStats {
     total: number
     active: number
   }
-  /** Platform admin only: payout requests awaiting review */
+  /** Platform admin only: payouts currently sending via Paystack */
   pendingPayoutRequests?: number
-  /** Platform admin: weekly super-admin payout rhythm + next reminder time (server) */
+  /** Platform admin: leftover weekly reminder metadata (payouts are automatic) */
   payoutProcessingSchedule?: {
     weekday: string
     hourLocal: number
@@ -42,6 +42,8 @@ export interface DashboardStats {
   }
   trends?: {
     days: number
+    fromYmd?: string
+    toYmd?: string
     series: Array<{
       date: string
       label: string
@@ -49,6 +51,35 @@ export interface DashboardStats {
       revenueKes: number
       newSubscriptions: number
     }>
+  }
+  /** Completed support in the selected Nairobi calendar range. */
+  period?: {
+    preset: string
+    fromYmd: string
+    toYmd: string
+    label: string
+    completedPayments: number
+    newSubscriptions: number
+    newFans?: number
+    pendingPayments?: number
+    failedPayments?: number
+    revenueKes: number
+    revenueBySource?: {
+      subscriptionsKes: number
+      shoutoutsKes: number
+      coachingKes: number
+      tiersKes: number
+      otherKes: number
+      totalKes: number
+    }
+    previous?: {
+      fromYmd: string
+      toYmd: string
+      completedPayments: number
+      newSubscriptions: number
+      newFans?: number
+      revenueKes: number
+    }
   }
 }
 
@@ -112,6 +143,8 @@ export interface RevenueDailyRow {
   accountReviewKes: number
   otherKes: number
   totalKes: number
+  platformRevenueKes?: number
+  grossKes?: number
 }
 
 /** One completed payment: amount, fee (rounded per tx), net — for audit UI. */
@@ -132,9 +165,13 @@ export interface RevenueBreakdownResponse {
   rangeStartUtc: string
   rangeEndUtc: string
   totalKes: number
+  grossPaymentsKes?: number
   platformFeePercent: number
   platformFeeKes: number
   creatorNetKes: number
+  creatorEarningsKes?: number
+  refundsKes?: number
+  netPlatformRevenueKes?: number
   totalCount: number
   sources: RevenueSourceRow[]
   daily: RevenueDailyRow[]
@@ -145,6 +182,15 @@ export interface RevenueBreakdownResponse {
 export interface CreatorWalletSummary {
   completedPayments: number
   platformFeePercent: number
+  minWithdrawalKes?: number
+  withdrawalFeeKes?: number
+  availableKes?: number
+  pendingKes?: number
+  reservedKes?: number
+  lifetimeEarningsKes?: number
+  totalWithdrawnKes?: number
+  outstandingDebtKes?: number
+  withdrawableKes?: number
   totals: {
     grossKes: number
     feeKes: number

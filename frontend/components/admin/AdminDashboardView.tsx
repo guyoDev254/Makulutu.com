@@ -41,18 +41,24 @@ import {
   ArrowRight,
   AlertTriangle,
   LayoutDashboard,
+  Radio,
   Trophy,
 } from 'lucide-react'
 import type { AdminTabId } from '@/components/admin/types'
 import { DashboardCharts } from '@/components/admin/DashboardCharts'
+import { DashboardRangeControls } from '@/components/admin/DashboardRangeControls'
+import { PayoutsPanel } from '@/components/admin/PayoutsPanel'
+import { payoutStatusBadgeClass, payoutStatusLabel } from '@/components/admin/format'
 import { COACHING_SERVICE_LABELS } from '@/components/admin/constants'
 import type { AdminDashboardModel } from '@/components/admin/adminDashboardTypes'
 import { AdminDashboardModals } from '@/components/admin/AdminDashboardModals'
 import { CreatorSuperProfileModal } from '@/components/admin/CreatorSuperProfileModal'
 import { PlatformFeeBreakdownTable } from '@/components/admin/PlatformFeeBreakdownTable'
 import { AdminRewardsPanel } from '@/components/admin/AdminRewardsPanel'
+import { AdminStreamersPanel } from '@/components/admin/AdminStreamersPanel'
 import api from '@/lib/api'
 import { creatorDashboardApi } from '@/lib/creator-dashboard-api'
+import { supportCountryLabel } from '@/lib/support-countries'
 
 export type { AdminDashboardModel }
 
@@ -101,7 +107,7 @@ const OBS_MSG_SAMPLE = {
 export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
   if (admin.loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-canvas">
         <div className="text-center">
           <Loader2 className="w-12 h-12 text-purple-400 animate-spin mx-auto mb-4" />
           <p className="text-gray-400">Loading dashboard...</p>
@@ -122,6 +128,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
     creatorsPagination,
     setCreatorsPagination,
     patchCreatorAdmin,
+    rejectCreatorStream,
     emailCreatorFromAdmin,
     updatingCreatorId,
     creatorSuperProfileOpen,
@@ -175,6 +182,10 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
     setSearchQuery,
     statusFilter,
     setStatusFilter,
+    payoutStatusFilter,
+    setPayoutStatusFilter,
+    payoutStatusCounts,
+    exportingPayouts,
     setShowChangePasswordModal,
     setCreatingSubscription,
     saveCoachingBooking,
@@ -190,11 +201,18 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
     revenueLoading,
     revenuePreset,
     setRevenuePreset,
+    overviewPreset,
+    setOverviewPreset,
+    overviewFrom,
+    setOverviewFrom,
+    overviewTo,
+    setOverviewTo,
     revenueFrom,
     setRevenueFrom,
     revenueTo,
     setRevenueTo,
     fetchRevenue,
+    fetchDashboardData,
     toggleShoutoutSelected,
     toggleAllShoutoutsOnPage,
     handleDeleteSelectedShoutouts,
@@ -203,6 +221,8 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
     handleEditUser,
     handleConfirmWhatsApp,
     handleMarkWhatsAppRemoved,
+    handleDeleteUser,
+    handleDeleteSubscription,
     isAdminOrSuper,
     isSuperAdmin,
     handleEditSubscription,
@@ -213,6 +233,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
     formatAmountForRole,
     handleRequestPayout,
     handleReviewPayoutRequest,
+    handleExportPayoutBatch,
     formatDate,
     shoutoutPlatformLabel,
     getStatusBadge,
@@ -318,7 +339,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
             className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-800/80"
           >
             <Sparkles className="h-4 w-4 shrink-0 text-amber-400/90" />
-            New streamer signup
+            New creator signup
             <ExternalLink className="h-3.5 w-3.5 ml-auto opacity-50" aria-hidden />
           </Link>
         </div>
@@ -327,21 +348,9 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
   )
 
   return (
-    <div
-      className={
-        (isCreatorWorkspace
-          ? 'min-h-screen flex flex-col bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900'
-          : 'min-h-screen flex flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-zinc-950')
-      }
-    >
+    <div className="flex min-h-screen flex-col bg-canvas">
       {/* Header */}
-      <header
-        className={
-          isCreatorWorkspace
-            ? 'bg-gray-800/50 backdrop-blur-lg border-b border-gray-700/50 sticky top-0 z-50'
-            : 'bg-slate-900/60 backdrop-blur-lg border-b border-slate-700/50 sticky top-0 z-50'
-        }
-      >
+      <header className="sticky top-0 z-50 border-b border-white/5 bg-[#07070c]/80 backdrop-blur-xl">
         <div className="container mx-auto max-w-[1600px] px-3 sm:px-4 py-3 sm:py-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 flex items-start gap-3">
@@ -363,11 +372,11 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
               <h1
                 className={
                   isCreatorWorkspace
-                    ? 'text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent truncate'
+                    ? 'text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent truncate'
                     : 'text-xl sm:text-2xl lg:text-3xl font-bold bg-gradient-to-r from-cyan-300 to-blue-400 bg-clip-text text-transparent truncate'
                 }
               >
-                {isCreatorWorkspace ? 'Creator workspace' : 'Platform admin'}
+                {isCreatorWorkspace ? 'Streamer workspace' : 'Platform admin'}
               </h1>
               <p
                 className={
@@ -377,7 +386,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                 }
               >
                 {isCreatorWorkspace
-                  ? 'Your subscribers, revenue, shoutouts, and OBS tools'
+                  ? 'Members, revenue, and scheduled lives'
                   : 'All creators, billing, payouts, and platform settings.'}
               </p>
               </div>
@@ -408,11 +417,21 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                     </span>
                   ) : (
                     <span className="text-[10px] sm:text-xs text-gray-500 uppercase shrink-0 hidden sm:inline">
-                      Creator
+                      Streamer
                     </span>
                   )}
                 </div>
               )}
+              {isCreatorWorkspace ? (
+                <Link
+                  href="/creator/lives"
+                  className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] bg-red-600/80 hover:bg-red-500 text-white rounded-lg transition text-sm font-semibold"
+                  title="Schedule a live"
+                >
+                  <Radio className="w-4 h-4 shrink-0" />
+                  Schedule live
+                </Link>
+              ) : null}
               {isCreatorWorkspace ? (
                 <Link
                   href="/creator/profile"
@@ -470,12 +489,10 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
             <div className="flex space-x-1 overflow-x-auto pb-px touch-pan-x [-webkit-overflow-scrolling:touch]">
               {[
                 { id: 'overview', label: 'Overview', icon: BarChart3 },
-                { id: 'users', label: 'Users', icon: Users },
-                { id: 'subscriptions', label: 'Subscriptions', icon: Calendar },
+                { id: 'subscriptions', label: 'Members', icon: Users },
+                { id: 'shoutouts', label: 'Shoutouts', icon: Megaphone },
                 { id: 'payments', label: 'Payments', icon: CreditCard },
                 { id: 'tierPurchases', label: 'Tier purchases', icon: ShoppingBag },
-                { id: 'rankings', label: 'Rankings', icon: Trophy },
-                { id: 'shoutouts', label: 'Shoutouts', icon: Megaphone },
                 { id: 'payouts', label: 'Payouts', icon: Wallet },
                 { id: 'revenue', label: 'Revenue', icon: TrendingUp },
                 ...(showRewardTiersTab
@@ -591,10 +608,10 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                   </h2>
                   <p className="mt-1 max-w-xl text-sm text-slate-400">
                     {isCreatorWorkspace
-                      ? 'Supporters, subscriptions, and payouts in one place. Use the tabs above for full lists.'
+                      ? 'Check today or this week of support, then open Members, Shoutouts, Revenue, or Payouts.'
                       : `${new Date().toLocaleDateString('en-KE', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} · Full platform snapshot${
                           stats?.payoutProcessingSchedule
-                            ? ' · Creator payouts: super admin processing day is Wednesday (see Payouts tab).'
+                            ? ' · Streamer payouts go out via Paystack when requested (see Payouts tab).'
                             : ''
                         }`}
                   </p>
@@ -607,6 +624,52 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
               ) : null}
             </div>
 
+            <DashboardRangeControls
+              preset={overviewPreset}
+              from={overviewFrom}
+              to={overviewTo}
+              periodLabel={stats.period?.label}
+              accent={isCreatorWorkspace ? 'violet' : 'cyan'}
+              title={isCreatorWorkspace ? 'Your day and week' : 'Performance range'}
+              onPreset={(id) => setOverviewPreset(id)}
+              onCustomStart={(ymd) => {
+                setOverviewFrom(ymd)
+                setOverviewTo(ymd)
+                setOverviewPreset('custom')
+                void fetchDashboardData({ preset: 'custom', from: ymd, to: ymd })
+              }}
+              onFromChange={setOverviewFrom}
+              onToChange={setOverviewTo}
+              onApplyCustom={() =>
+                void fetchDashboardData({
+                  preset: 'custom',
+                  from: overviewFrom,
+                  to: overviewTo,
+                })
+              }
+            />
+
+            {isCreatorWorkspace ? (
+              <Link
+                href="/creator/lives"
+                className="flex flex-col gap-3 rounded-2xl border border-red-500/30 bg-gradient-to-r from-red-950/50 to-violet-950/30 px-4 py-4 sm:flex-row sm:items-center sm:justify-between hover:border-red-400/50 transition"
+              >
+                <div className="flex gap-3">
+                  <Radio className="h-5 w-5 shrink-0 text-red-300" aria-hidden />
+                  <div>
+                    <p className="text-sm font-semibold text-white">Schedule a live</p>
+                    <p className="mt-0.5 text-xs text-gray-400">
+                      Time, platform, and description. Followers are notified when you publish.
+                    </p>
+                  </div>
+                </div>
+                <span className="inline-flex items-center gap-2 self-start rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white sm:self-auto">
+                  Open live page
+                  <ArrowRight className="h-4 w-4" aria-hidden />
+                </span>
+              </Link>
+            ) : null}
+
             {!isCreatorWorkspace &&
             ((typeof stats.pendingPayoutRequests === 'number' && stats.pendingPayoutRequests > 0) ||
               stats.payments.failed > 0) ? (
@@ -617,11 +680,11 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                       <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" aria-hidden />
                       <div>
                         <p className="text-sm font-semibold text-amber-100">
-                          {stats.pendingPayoutRequests} payout request
-                          {stats.pendingPayoutRequests === 1 ? '' : 's'} need review
+                          {stats.pendingPayoutRequests} payout
+                          {stats.pendingPayoutRequests === 1 ? '' : 's'} in progress
                         </p>
                         <p className="mt-0.5 text-xs text-amber-200/75">
-                          Approve, reject, or mark paid from Payouts.
+                          Paystack is sending these to M-Pesa. Open Payouts to track them.
                         </p>
                       </div>
                     </div>
@@ -630,7 +693,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                       onClick={() => navigatePlatformTab('payouts')}
                       className="inline-flex items-center justify-center gap-2 self-start rounded-xl bg-amber-600/90 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-500 sm:self-auto"
                     >
-                      Review payouts
+                      View payouts
                       <ArrowRight className="h-4 w-4" aria-hidden />
                     </button>
                   </div>
@@ -663,15 +726,16 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
             ) : null}
 
             {(() => {
-              const r = stats.payments.revenueBySource
-              const sub = r?.subscriptionsKes ?? stats.payments.subscriptionAmount ?? 0
-              const shout = r?.shoutoutsKes ?? stats.payments.shoutoutAmount ?? 0
+              const periodSrc = stats.period?.revenueBySource
+              const r = periodSrc ?? stats.payments.revenueBySource
+              const sub = r?.subscriptionsKes ?? (periodSrc ? 0 : stats.payments.subscriptionAmount ?? 0)
+              const shout = r?.shoutoutsKes ?? (periodSrc ? 0 : stats.payments.shoutoutAmount ?? 0)
               const coach = r?.coachingKes ?? 0
               const tiers = r?.tiersKes ?? 0
               const other = r?.otherKes ?? 0
               const totalKes =
                 r?.totalKes ??
-                stats.payments.totalAmount ??
+                (periodSrc ? 0 : stats.payments.totalAmount) ??
                 sub + shout + coach + tiers + other
               const denom = totalKes > 0 ? totalKes : 1
               const slices = [
@@ -714,7 +778,11 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                     <div>
                       <h3 className="text-sm font-semibold text-white">Revenue by source</h3>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Share of completed payments (all time{isCreatorWorkspace ? ', your page' : ''})
+                        Share of completed payments
+                        {stats.period?.label
+                          ? ` (${stats.period.label})`
+                          : ' (all time)'}
+                        {isCreatorWorkspace ? ', your page' : ''}
                       </p>
                     </div>
                     <button
@@ -735,7 +803,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                     </p>
                   ) : totalKes <= 0 ? (
                     <p className="rounded-xl border border-dashed border-slate-600/60 bg-slate-950/40 py-8 text-center text-sm text-slate-500">
-                      No completed revenue yet — shares will appear after successful checkouts.
+                      No completed support in this range. Try This week or Last 30 days.
                     </p>
                   ) : (
                     <>
@@ -796,7 +864,11 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
 
             <div>
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                {isCreatorWorkspace ? 'Audience & billing' : 'Key metrics'}
+                {stats.period?.label
+                  ? `In this range · ${stats.period.label}`
+                  : isCreatorWorkspace
+                    ? 'Audience & billing'
+                    : 'Key metrics'}
               </h3>
               <div
                 className={`grid gap-3 sm:gap-4 md:grid-cols-2 ${
@@ -820,6 +892,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                     <p className="text-sm text-emerald-400/90 mt-1">{stats.streamers.active} active</p>
                   </button>
                 ) : null}
+                {!isCreatorWorkspace ? (
                 <button
                   type="button"
                   onClick={() => setActiveTab('users')}
@@ -830,10 +903,15 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                       <Users className="w-6 h-6 text-purple-400" aria-hidden />
                     </div>
                   </div>
-                  <h3 className="text-slate-400 text-sm mb-1">Supporters</h3>
-                  <p className="text-3xl font-bold text-white tabular-nums">{stats.users.total}</p>
-                  <p className="text-sm text-emerald-400/90 mt-1">{stats.users.active} active</p>
+                  <h3 className="text-slate-400 text-sm mb-1">New supporters</h3>
+                  <p className="text-3xl font-bold text-white tabular-nums">
+                    {stats.period?.newFans ?? 0}
+                  </p>
+                  <p className="text-sm text-emerald-400/90 mt-1">
+                    {stats.users.total} all time · {stats.users.active} active
+                  </p>
                 </button>
+                ) : null}
 
                 <button
                   type="button"
@@ -845,10 +923,14 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                       <Calendar className="w-6 h-6 text-blue-400" aria-hidden />
                     </div>
                   </div>
-                  <h3 className="text-slate-400 text-sm mb-1">Active subscriptions</h3>
-                  <p className="text-3xl font-bold text-white tabular-nums">{stats.subscriptions.active}</p>
+                  <h3 className="text-slate-400 text-sm mb-1">
+                    {isCreatorWorkspace ? 'New members' : 'New subscriptions'}
+                  </h3>
+                  <p className="text-3xl font-bold text-white tabular-nums">
+                    {stats.period?.newSubscriptions ?? 0}
+                  </p>
                   <p className="text-sm text-slate-400 mt-1">
-                    {stats.subscriptions.total} total · {stats.subscriptions.expired} expired
+                    {stats.subscriptions.active} currently active · {stats.subscriptions.expired} expired
                   </p>
                 </button>
 
@@ -863,12 +945,20 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                     </div>
                   </div>
                   <h3 className="text-slate-400 text-sm mb-1">Completed payments</h3>
-                  <p className="text-3xl font-bold text-white tabular-nums">{stats.payments.completed}</p>
+                  <p className="text-3xl font-bold text-white tabular-nums">
+                    {stats.period?.completedPayments ?? 0}
+                  </p>
                   <p className="text-sm text-yellow-400/90 mt-1">
-                    {stats.payments.pending} pending
-                    {stats.payments.failed > 0 ? (
-                      <span className="text-red-400/90"> · {stats.payments.failed} failed</span>
+                    {stats.period?.pendingPayments ?? 0} pending in range
+                    {(stats.period?.failedPayments ?? 0) > 0 ? (
+                      <span className="text-red-400/90">
+                        {' '}
+                        · {stats.period?.failedPayments} failed
+                      </span>
                     ) : null}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {stats.payments.completed} completed all time
                   </p>
                 </button>
 
@@ -882,25 +972,31 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                       <DollarSign className="w-6 h-6 text-amber-400" aria-hidden />
                     </div>
                   </div>
-                  <h3 className="text-slate-400 text-sm mb-1">Gross revenue</h3>
+                  <h3 className="text-slate-400 text-sm mb-1">Revenue in range</h3>
                   <p className="text-2xl sm:text-3xl font-bold text-white tabular-nums leading-tight">
-                    {formatAmountForRole(stats.payments.totalAmount)}
+                    {formatAmountForRole(stats.period?.revenueKes ?? 0)}
                   </p>
                   <div className="text-xs sm:text-sm space-y-0.5 mt-2 text-slate-400">
                     <p>
                       Subs{' '}
                       <span className="font-semibold text-purple-200/90">
-                        {formatAmountForRole(stats.payments.subscriptionAmount ?? 0)}
+                        {formatAmountForRole(
+                          stats.period?.revenueBySource?.subscriptionsKes ?? 0,
+                        )}
                       </span>
                     </p>
                     <p>
                       Shoutouts{' '}
                       <span className="font-semibold text-cyan-200/90">
-                        {formatAmountForRole(stats.payments.shoutoutAmount ?? 0)}
+                        {formatAmountForRole(
+                          stats.period?.revenueBySource?.shoutoutsKes ?? 0,
+                        )}
                       </span>
                     </p>
                   </div>
-                  <p className="text-xs text-slate-500 mt-2">{stats.payments.total} transactions</p>
+                  <p className="text-xs text-slate-500 mt-2">
+                    All time {formatAmountForRole(stats.payments.totalAmount)}
+                  </p>
                 </button>
               </div>
             </div>
@@ -910,71 +1006,75 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                 <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
                   Earnings & payouts
                 </h3>
-                <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
-                  <div className="rounded-2xl bg-gradient-to-br from-emerald-500/12 to-emerald-600/5 p-5 border border-emerald-500/25">
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="rounded-lg bg-emerald-500/20 p-2">
-                        <Wallet className="w-5 h-5 text-emerald-400" aria-hidden />
-                      </div>
-                      <h3 className="text-slate-300 text-sm font-semibold">Gross earnings</h3>
-                    </div>
-                    <p className="text-2xl font-bold text-white tabular-nums">
-                      {formatAmountForRole(walletSummary.totals.grossKes)}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-2">
-                      {walletSummary.completedPayments} completed payments
-                    </p>
-                  </div>
-                  <div className="rounded-2xl bg-gradient-to-br from-amber-500/12 to-amber-600/5 p-5 border border-amber-500/25">
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="rounded-lg bg-amber-500/20 p-2">
-                        <ArrowDown className="w-5 h-5 text-amber-400" aria-hidden />
-                      </div>
-                      <h3 className="text-slate-300 text-sm font-semibold">Platform fee</h3>
-                    </div>
-                    <p className="text-2xl font-bold text-white tabular-nums">
-                      {formatAmountForRole(walletSummary.totals.feeKes)}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-2">
-                      {walletSummary.platformFeePercent}% on each completed payment, summed
-                    </p>
-                  </div>
-                  <div className="rounded-2xl bg-gradient-to-br from-cyan-500/12 to-cyan-600/5 p-5 border border-cyan-500/25">
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="rounded-lg bg-cyan-500/20 p-2">
-                        <ArrowUp className="w-5 h-5 text-cyan-400" aria-hidden />
-                      </div>
-                      <h3 className="text-slate-300 text-sm font-semibold">Estimated net</h3>
-                    </div>
-                    <p className="text-2xl font-bold text-white tabular-nums">
-                      {formatAmountForRole(walletSummary.totals.netKes)}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-2">Gross minus per-payment fees</p>
-                  </div>
-                  <div className="rounded-2xl bg-gradient-to-br from-violet-500/12 to-violet-600/5 p-5 border border-violet-500/25 flex flex-col">
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="rounded-lg bg-violet-500/20 p-2">
-                        <CreditCard className="w-5 h-5 text-violet-300" aria-hidden />
-                      </div>
-                      <h3 className="text-slate-300 text-sm font-semibold">Payout requests</h3>
-                    </div>
-                    <p className="text-2xl font-bold text-white tabular-nums">{payoutRequests.length}</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Pending:{' '}
-                      {payoutRequests.filter((r) => String(r.status) === 'PENDING').length}
+                <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+                  {(() => {
+                    const openPayout = payoutRequests.find((r) =>
+                      ['PENDING', 'APPROVED'].includes(String(r.status)),
+                    )
+                    const canWithdraw =
+                      !payoutRequesting &&
+                      (walletSummary.withdrawableKes ?? 0) > 0 &&
+                      !openPayout
+                    const reservedKes = Number(walletSummary.reservedKes ?? 0)
+                    const debtKes = Number(walletSummary.outstandingDebtKes ?? 0)
+                    return (
+                      <>
+                  <div className="rounded-2xl bg-gradient-to-br from-emerald-500/12 to-emerald-600/5 p-5 border border-emerald-500/25 flex flex-col">
+                    <h3 className="text-slate-300 text-sm font-semibold">Available to withdraw</h3>
+                    <p className="text-2xl font-bold text-white tabular-nums mt-1">
+                      {formatAmountForRole(walletSummary.withdrawableKes ?? 0)}
                     </p>
                     <button
                       type="button"
                       onClick={handleRequestPayout}
-                      disabled={
-                        payoutRequesting ||
-                        payoutRequests.some((r) => String(r.status) === 'PENDING')
-                      }
+                      disabled={!canWithdraw}
                       className="mt-auto pt-4 inline-flex items-center justify-center rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white px-3 py-2.5 text-xs font-semibold w-full"
                     >
-                      {payoutRequesting ? 'Submitting…' : 'Request payout'}
+                      {payoutRequesting ? 'Sending…' : 'Send payout'}
                     </button>
+                    <p className="text-xs text-slate-500 mt-2">
+                      {openPayout
+                        ? `Paystack is sending ${formatAmountForRole(Number(openPayout.amountKes || 0))}. Wait until it lands or fails.`
+                        : (walletSummary.withdrawableKes ?? 0) <= 0
+                          ? 'Nothing available yet — pending earnings are still settling.'
+                          : 'Paystack sends this to your M-Pesa number or Kenyan bank.'}
+                    </p>
                   </div>
+                  <div className="rounded-2xl bg-gradient-to-br from-amber-500/12 to-amber-600/5 p-5 border border-amber-500/25">
+                    <h3 className="text-slate-300 text-sm font-semibold">Pending earnings</h3>
+                    <p className="text-2xl font-bold text-white tabular-nums mt-1">
+                      {formatAmountForRole(walletSummary.pendingKes ?? 0)}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-2">Waiting for settlement</p>
+                  </div>
+                  <div className="rounded-2xl bg-gradient-to-br from-slate-500/12 to-slate-600/5 p-5 border border-slate-500/25">
+                    <h3 className="text-slate-300 text-sm font-semibold">Total withdrawn</h3>
+                    <p className="text-2xl font-bold text-white tabular-nums mt-1">
+                      {formatAmountForRole(walletSummary.totalWithdrawnKes ?? 0)}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-2">Already sent to M-Pesa</p>
+                  </div>
+                  {reservedKes > 0 ? (
+                    <div className="rounded-2xl bg-gradient-to-br from-violet-500/12 to-violet-600/5 p-5 border border-violet-500/25">
+                      <h3 className="text-slate-300 text-sm font-semibold">Sending now</h3>
+                      <p className="text-2xl font-bold text-white tabular-nums mt-1">
+                        {formatAmountForRole(reservedKes)}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-2">Locked while Paystack pays</p>
+                    </div>
+                  ) : null}
+                  {debtKes > 0 ? (
+                    <div className="rounded-2xl bg-gradient-to-br from-rose-500/12 to-rose-600/5 p-5 border border-rose-500/25">
+                      <h3 className="text-slate-300 text-sm font-semibold">Held back</h3>
+                      <p className="text-2xl font-bold text-white tabular-nums mt-1">
+                        {formatAmountForRole(debtKes)}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-2">Taken from withdrawable balance</p>
+                    </div>
+                  ) : null}
+                      </>
+                    )
+                  })()}
                 </div>
 
                 {walletSummary.recentFeeLines != null ? (
@@ -995,7 +1095,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
 
             {isCreatorWorkspace && payoutRequests.length > 0 && (
               <div className="rounded-2xl border border-slate-700/70 bg-slate-900/40 p-5 sm:p-6">
-                <h3 className="text-slate-100 font-semibold mb-4">Recent payout requests</h3>
+                <h3 className="text-slate-100 font-semibold mb-4">Recent payouts</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[640px]">
                     <thead className="text-xs uppercase text-gray-400">
@@ -1007,7 +1107,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {payoutRequests.slice(0, 5).map((r) => (
+                      {payoutRequests.slice(0, 8).map((r) => (
                         <tr key={r.id} className="border-t border-gray-700/40">
                           <td className="py-2 pr-4 text-sm text-gray-300">
                             {formatDate(r.createdAt)}
@@ -1017,17 +1117,9 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                           </td>
                           <td className="py-2 pr-4 text-sm">
                             <span
-                              className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                                r.status === 'PAID'
-                                  ? 'bg-emerald-500/20 text-emerald-300'
-                                  : r.status === 'APPROVED'
-                                    ? 'bg-cyan-500/20 text-cyan-300'
-                                    : r.status === 'REJECTED'
-                                      ? 'bg-red-500/20 text-red-300'
-                                      : 'bg-amber-500/20 text-amber-300'
-                              }`}
+                              className={`px-2 py-1 rounded-full text-xs font-semibold ring-1 ${payoutStatusBadgeClass(String(r.status))}`}
                             >
-                              {r.status}
+                              {payoutStatusLabel(String(r.status))}
                             </span>
                           </td>
                           <td className="py-2 pr-4 text-sm text-gray-400">
@@ -1043,454 +1135,114 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
 
             <div>
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Trends
+                Daily trends
               </h3>
               <DashboardCharts
                 series={stats.trends?.series ?? []}
-                payments={stats.payments}
+                payments={{
+                  completed: stats.period?.completedPayments ?? stats.payments.completed,
+                  pending: stats.period?.pendingPayments ?? stats.payments.pending,
+                  failed: stats.period?.failedPayments ?? stats.payments.failed,
+                  total:
+                    (stats.period?.completedPayments ?? 0) +
+                    (stats.period?.pendingPayments ?? 0) +
+                    (stats.period?.failedPayments ?? 0) || stats.payments.total,
+                }}
                 formatKes={formatAmountForRole}
                 hideNumericAmounts={adminUser?.role === 'MODERATOR'}
+                period={
+                  stats.period
+                    ? {
+                        label: stats.period.label,
+                        completedPayments: stats.period.completedPayments,
+                        newSubscriptions: stats.period.newSubscriptions,
+                        revenueKes: stats.period.revenueKes,
+                        previous: stats.period.previous,
+                      }
+                    : null
+                }
               />
             </div>
           </div>
         )}
 
         {activeTab === 'payouts' && (
-          <div className="space-y-6">
-            {!isCreatorWorkspace && stats?.payoutProcessingSchedule ? (
-              <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/25 px-4 py-4 text-sm text-cyan-50/95">
-                <p className="font-semibold text-cyan-100">
-                  Weekly payout run — every {stats.payoutProcessingSchedule.weekday} (super admin)
-                </p>
-                <p className="mt-2 text-cyan-100/80 leading-relaxed">
-                  {stats.payoutProcessingSchedule.summary}
-                </p>
-                <p className="mt-2 text-xs text-cyan-200/65">
-                  Next scheduled reminder email (server time):{' '}
-                  {new Date(stats.payoutProcessingSchedule.nextReminderAt).toLocaleString(undefined, {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  })}
-                </p>
-              </div>
-            ) : null}
-            {!isCreatorWorkspace && (
-              <div className="flex flex-col md:flex-row gap-4">
-                <div className="flex-1 relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Search payout requests..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 overflow-hidden">
-              <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
-                <table className="w-full min-w-[860px]">
-                  <thead className="bg-gray-700/50">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Date</th>
-                      {!isCreatorWorkspace && (
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Creator</th>
-                      )}
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Amount</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Status</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Channel</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Reference</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Reviewed</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Notes</th>
-                      {!isCreatorWorkspace && (
-                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-300 uppercase tracking-wider">Actions</th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payoutRequests.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={isCreatorWorkspace ? 8 : 9}
-                          className="px-4 py-8 text-sm text-gray-400 text-center"
-                        >
-                          No payout requests found.
-                        </td>
-                      </tr>
-                    ) : (
-                      payoutRequests.map((r: any) => (
-                        <tr key={r.id} className="border-t border-gray-700/40">
-                          <td className="px-4 py-3 text-sm text-gray-300">{formatDate(r.createdAt)}</td>
-                          {!isCreatorWorkspace && (
-                            <td className="px-4 py-3 text-sm text-gray-200">
-                              {r.creator?.displayName || r.creator?.slug || '—'}
-                            </td>
-                          )}
-                          <td className="px-4 py-3 text-sm font-semibold text-white">
-                            {formatAmountForRole(Number(r.amountKes || 0))}
-                          </td>
-                          <td className="px-4 py-3 text-sm">
-                            <span
-                              className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                                r.status === 'PAID'
-                                  ? 'bg-emerald-500/20 text-emerald-300'
-                                  : r.status === 'APPROVED'
-                                    ? 'bg-cyan-500/20 text-cyan-300'
-                                    : r.status === 'REJECTED'
-                                      ? 'bg-red-500/20 text-red-300'
-                                      : 'bg-amber-500/20 text-amber-300'
-                              }`}
-                            >
-                              {r.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-300">{r.payoutChannel || '—'}</td>
-                          <td className="px-4 py-3 text-sm text-gray-300">{r.payoutReference || '—'}</td>
-                          <td className="px-4 py-3 text-sm text-gray-400">
-                            {r.reviewedAt
-                              ? `${r.reviewedBy || 'admin'} · ${formatDate(r.reviewedAt)}`
-                              : '—'}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-400 max-w-[280px] truncate">
-                            {r.notes || '—'}
-                          </td>
-                          {!isCreatorWorkspace && (
-                            <td className="px-4 py-3 text-right">
-                              <div className="inline-flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  disabled={reviewingPayoutId === r.id || r.status !== 'PENDING'}
-                                  onClick={() => handleReviewPayoutRequest(r.id, 'APPROVED')}
-                                  className="px-2.5 py-1.5 text-xs rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white"
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={reviewingPayoutId === r.id || r.status !== 'PENDING'}
-                                  onClick={() => handleReviewPayoutRequest(r.id, 'REJECTED')}
-                                  className="px-2.5 py-1.5 text-xs rounded bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white"
-                                >
-                                  Reject
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={reviewingPayoutId === r.id || r.status !== 'APPROVED'}
-                                  onClick={() => handleReviewPayoutRequest(r.id, 'PAID')}
-                                  className="px-2.5 py-1.5 text-xs rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white"
-                                >
-                                  Mark paid
-                                </button>
-                              </div>
-                            </td>
-                          )}
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {!isCreatorWorkspace && payoutsPagination.totalPages > 1 && (
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-gray-400">
-                  Page {payoutsPagination.page} of {payoutsPagination.totalPages}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() =>
-                      setPayoutsPagination((p: any) => ({ ...p, page: Math.max(1, p.page - 1) }))
-                    }
-                    disabled={payoutsPagination.page === 1}
-                    className="px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white rounded-lg text-sm"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() =>
-                      setPayoutsPagination((p: any) => ({
-                        ...p,
-                        page: Math.min(p.totalPages, p.page + 1),
-                      }))
-                    }
-                    disabled={payoutsPagination.page >= payoutsPagination.totalPages}
-                    className="px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white rounded-lg text-sm"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          <PayoutsPanel
+            isCreatorWorkspace={isCreatorWorkspace}
+            isAdminOrSuper={isAdminOrSuper()}
+            rows={payoutRequests}
+            counts={payoutStatusCounts}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            payoutStatusFilter={payoutStatusFilter}
+            setPayoutStatusFilter={setPayoutStatusFilter}
+            onResetPage={() => setPayoutsPagination((p: any) => ({ ...p, page: 1 }))}
+            formatAmount={formatAmountForRole}
+            formatDate={formatDate}
+            reviewingPayoutId={reviewingPayoutId}
+            onReview={(id, status) => void handleReviewPayoutRequest(id, status)}
+            exportingPayouts={exportingPayouts}
+            onExportApproved={() => void handleExportPayoutBatch('APPROVED')}
+            schedule={stats?.payoutProcessingSchedule ?? null}
+            pagination={payoutsPagination}
+            onPrevPage={() =>
+              setPayoutsPagination((p: any) => ({ ...p, page: Math.max(1, p.page - 1) }))
+            }
+            onNextPage={() =>
+              setPayoutsPagination((p: any) => ({
+                ...p,
+                page: Math.min(p.totalPages, p.page + 1),
+              }))
+            }
+          />
         )}
 
         {/* Streamer / creator accounts (platform admin) */}
         {!isCreatorWorkspace && activeTab === 'creators' && (
-          <div className="space-y-6">
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1 relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search by email, slug, or display name..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  exportToCSV(
-                    creators.map((c: any) => ({
-                      id: c.id,
-                      email: c.email,
-                      slug: c.slug,
-                      displayName: c.displayName,
-                      isActive: c.isActive,
-                      supportEnabled: c.supportEnabled,
-                      onboardingComplete: c.onboardingComplete,
-                      primaryCategory: c.primaryCategory ?? '',
-                      lastLogin: c.lastLogin ?? '',
-                      users: c._count?.users ?? 0,
-                      payments: c._count?.payments ?? 0,
-                      subscriptions: c._count?.subscriptions ?? 0,
-                      creatorRewards: c._count?.creatorRewards ?? 0,
-                      createdAt: c.createdAt,
-                    })),
-                    'streamers',
-                  )
-                }
-                className="flex items-center gap-2 px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition"
-              >
-                <Download className="w-4 h-4" />
-                Export CSV
-              </button>
-            </div>
-
-            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 overflow-hidden">
-              <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
-                <table className="w-full min-w-[900px]">
-                  <thead className="bg-gray-700/50">
-                    <tr>
-                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
-                        Streamer
-                      </th>
-                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
-                        Email
-                      </th>
-                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
-                        Status
-                      </th>
-                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
-                        Last login
-                      </th>
-                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
-                        Supporters / billing
-                      </th>
-                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-700/50">
-                    {creators.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
-                          No streamer accounts found
-                        </td>
-                      </tr>
-                    ) : (
-                      creators.map((c: any) => (
-                        <tr key={c.id} className="hover:bg-gray-700/30 transition">
-                          <td className="px-3 sm:px-6 py-4">
-                            <div className="font-medium text-white">{c.displayName}</div>
-                            <div className="text-sm text-cyan-300/90">/{c.slug}</div>
-                          </td>
-                          <td className="px-3 sm:px-6 py-4 text-gray-300 text-sm break-all max-w-[200px]">
-                            {c.email}
-                          </td>
-                          <td className="px-3 sm:px-6 py-4">
-                            <div className="flex flex-wrap gap-1.5">
-                              <span
-                                className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                                  c.isActive ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/15 text-red-300'
-                                }`}
-                              >
-                                {c.isActive ? 'Active' : 'Inactive'}
-                              </span>
-                              <span
-                                className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                                  c.supportEnabled
-                                    ? 'bg-blue-500/20 text-blue-200'
-                                    : 'bg-slate-600/40 text-slate-400'
-                                }`}
-                              >
-                                Support {c.supportEnabled ? 'on' : 'off'}
-                              </span>
-                              <span
-                                className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                                  c.onboardingComplete
-                                    ? 'bg-violet-500/20 text-violet-200'
-                                    : 'bg-amber-500/15 text-amber-200'
-                                }`}
-                              >
-                                {c.onboardingComplete ? 'Onboarded' : 'Onboarding'}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-3 sm:px-6 py-4 text-gray-400 text-sm whitespace-nowrap">
-                            {c.lastLogin ? formatDate(c.lastLogin) : '—'}
-                          </td>
-                          <td className="px-3 sm:px-6 py-4 text-gray-300 text-sm">
-                            <span className="whitespace-nowrap">
-                              {c._count?.users ?? 0} users · {c._count?.payments ?? 0} pay
-                            </span>
-                            <br />
-                            <span className="whitespace-nowrap text-gray-500 text-xs">
-                              {c._count?.subscriptions ?? 0} subs · {c._count?.creatorRewards ?? 0} tiers
-                            </span>
-                          </td>
-                          <td className="px-3 sm:px-6 py-4">
-                            <div className="flex flex-wrap items-center gap-2">
-                              {superAdminUser ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => void openCreatorSuperProfile(c.id)}
-                                    className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-500/20"
-                                  >
-                                    View more
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      void emailCreatorFromAdmin({
-                                        id: c.id,
-                                        email: c.email,
-                                        displayName: c.displayName,
-                                      })
-                                    }
-                                    className="rounded-lg border border-sky-500/35 bg-sky-500/10 px-2 py-1.5 text-xs font-medium text-sky-100 hover:bg-sky-500/20"
-                                  >
-                                    Email
-                                  </button>
-                                </>
-                              ) : null}
-                              <Link
-                                href={`/${c.slug}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 rounded-lg border border-slate-600 px-2 py-1.5 text-xs text-cyan-200 hover:bg-slate-700/60"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                                Page
-                              </Link>
-                              {isAdminOrSuper() ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    disabled={updatingCreatorId === c.id}
-                                    onClick={() =>
-                                      void patchCreatorAdmin(c.id, { isActive: !c.isActive })
-                                    }
-                                    className="rounded-lg bg-slate-700 px-2 py-1.5 text-xs text-white hover:bg-slate-600 disabled:opacity-50"
-                                    title="Toggle account active"
-                                  >
-                                    {c.isActive ? 'Deactivate' : 'Activate'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={updatingCreatorId === c.id}
-                                    onClick={() =>
-                                      void patchCreatorAdmin(c.id, {
-                                        supportEnabled: !c.supportEnabled,
-                                      })
-                                    }
-                                    className="rounded-lg bg-slate-700 px-2 py-1.5 text-xs text-white hover:bg-slate-600 disabled:opacity-50"
-                                    title="Toggle support page"
-                                  >
-                                    Support
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={updatingCreatorId === c.id}
-                                    onClick={() =>
-                                      void patchCreatorAdmin(c.id, {
-                                        onboardingComplete: !c.onboardingComplete,
-                                      })
-                                    }
-                                    className="rounded-lg bg-slate-700 px-2 py-1.5 text-xs text-white hover:bg-slate-600 disabled:opacity-50"
-                                    title="Toggle onboarding complete"
-                                  >
-                                    Onboarding
-                                  </button>
-                                </>
-                              ) : null}
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {creatorsPagination.totalPages > 1 && (
-                <div className="px-6 py-4 border-t border-gray-700/50 flex items-center justify-between">
-                  <div className="text-sm text-gray-400">
-                    Showing {(creatorsPagination.page - 1) * creatorsPagination.limit + 1} to{' '}
-                    {Math.min(
-                      creatorsPagination.page * creatorsPagination.limit,
-                      creatorsPagination.total,
-                    )}{' '}
-                    of {creatorsPagination.total} streamers
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setCreatorsPagination({
-                          ...creatorsPagination,
-                          page: Math.max(1, creatorsPagination.page - 1),
-                        })
-                      }
-                      disabled={creatorsPagination.page === 1}
-                      className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <span className="px-4 py-2 bg-gray-700 text-white rounded-lg">
-                      {creatorsPagination.page} / {creatorsPagination.totalPages}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setCreatorsPagination({
-                          ...creatorsPagination,
-                          page: Math.min(
-                            creatorsPagination.totalPages,
-                            creatorsPagination.page + 1,
-                          ),
-                        })
-                      }
-                      disabled={creatorsPagination.page >= creatorsPagination.totalPages}
-                      className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+          <AdminStreamersPanel
+            creators={creators}
+            pagination={creatorsPagination}
+            setPagination={setCreatorsPagination}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            streamerTotals={stats?.streamers}
+            updatingCreatorId={updatingCreatorId}
+            superAdmin={Boolean(superAdminUser)}
+            canManage={isAdminOrSuper()}
+            formatDate={formatDate}
+            onExport={() =>
+              exportToCSV(
+                creators.map((c: any) => ({
+                  id: c.id,
+                  email: c.email,
+                  slug: c.slug,
+                  displayName: c.displayName,
+                  isActive: c.isActive,
+                  supportEnabled: c.supportEnabled,
+                  streamVerified: c.streamVerified ? 'yes' : 'no',
+                  streamVerificationStatus: c.streamVerificationStatus ?? '',
+                  tiktokUrl: c.tiktokUrl ?? '',
+                  youtubeUrl: c.youtubeUrl ?? '',
+                  primaryCategory: c.primaryCategory ?? '',
+                  lastLogin: c.lastLogin ?? '',
+                  users: c._count?.users ?? 0,
+                  payments: c._count?.payments ?? 0,
+                  subscriptions: c._count?.subscriptions ?? 0,
+                  creatorRewards: c._count?.creatorRewards ?? 0,
+                  createdAt: c.createdAt,
+                })),
+                'streamers',
+              )
+            }
+            onOpenProfile={(id) => void openCreatorSuperProfile(id)}
+            onEmail={(c) => void emailCreatorFromAdmin(c)}
+            onPatch={(id, body) => void patchCreatorAdmin(id, body)}
+            onRejectStream={(c) => void rejectCreatorStream(c)}
+          />
         )}
 
-        {/* Users Tab */}
-        {activeTab === 'users' && (
+        {/* Users Tab (platform admin only — streamers use Members + Shoutouts) */}
+        {activeTab === 'users' && !isCreatorWorkspace && (
           <div className="space-y-6">
             {/* Search and Actions */}
             <div className="flex flex-col md:flex-row gap-4">
@@ -1498,7 +1250,11 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search users by name, TikTok username, or phone..."
+                  placeholder={
+                    isCreatorWorkspace
+                      ? 'Search fans by name, username, or phone...'
+                      : 'Search users by name, TikTok username, or phone...'
+                  }
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
@@ -1519,8 +1275,10 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                 <table className="w-full min-w-[720px]">
                   <thead className="bg-gray-700/50">
                     <tr>
-                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">User</th>
-                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">TikTok</th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        {isCreatorWorkspace ? 'Fan' : 'User'}
+                      </th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Username</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">M-Pesa</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">WhatsApp</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">WhatsApp Group</th>
@@ -1534,7 +1292,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                     {users.length === 0 ? (
                       <tr>
                         <td colSpan={9} className="px-6 py-12 text-center text-gray-400">
-                          No users found
+                          {isCreatorWorkspace ? 'No fans found' : 'No users found'}
                         </td>
                       </tr>
                     ) : (
@@ -1550,16 +1308,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                           <td className="px-6 py-4 text-gray-300">{user.mpesaMobile}</td>
                           <td className="px-6 py-4 text-gray-300">{user.whatsappNumber}</td>
                           <td className="px-6 py-4">
-                            {isCreatorWorkspace ? (
-                              user.addedToWhatsApp ? (
-                                <span className="inline-flex items-center gap-1.5 text-emerald-400 text-sm">
-                                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                                  Added
-                                </span>
-                              ) : (
-                                <span className="text-sm text-gray-500">Not added</span>
-                              )
-                            ) : user.addedToWhatsApp ? (
+                            {user.addedToWhatsApp ? (
                               <span className="inline-flex items-center gap-2">
                                 <span className="inline-flex items-center gap-1.5 text-emerald-400 text-sm">
                                   <CheckCircle2 className="w-4 h-4 shrink-0" />
@@ -1573,29 +1322,45 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                                   Mark removed
                                 </button>
                               </span>
-                            ) : (
+                            ) : (user.subscriptions?.length ?? 0) > 0 ? (
                               <button
                                 onClick={() => handleConfirmWhatsApp(user)}
                                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition"
-                                title="Confirm user has been added to WhatsApp group"
+                                title="Mark this member as added to the WhatsApp group"
                               >
                                 <MessageCircle className="w-4 h-4 shrink-0" />
-                                Confirm added
+                                Add to group
                               </button>
+                            ) : (
+                              <span
+                                className="text-xs text-gray-500"
+                                title="WhatsApp is for members with an active subscription"
+                              >
+                                Members only
+                              </span>
                             )}
                           </td>
                           <td className="px-6 py-4 text-gray-300">{user._count?.subscriptions || 0}</td>
                           <td className="px-6 py-4 text-gray-300">{user._count?.payments || 0}</td>
                           <td className="px-6 py-4 text-gray-400 text-sm">{formatDate(user.createdAt)}</td>
                           <td className="px-6 py-4">
-                            {isAdminOrSuper() && (
-                              <button
-                                onClick={() => handleEditUser(user)}
-                                className="p-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 rounded-lg transition"
-                                title="Edit user"
-                              >
-                                <Edit className="w-4 h-4" />
-                              </button>
+                            {(isCreatorWorkspace || isAdminOrSuper()) && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleEditUser(user)}
+                                  className="p-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 rounded-lg transition"
+                                  title={isCreatorWorkspace ? 'Edit fan' : 'Edit user'}
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUser(user)}
+                                  className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition"
+                                  title={isCreatorWorkspace ? 'Delete fan' : 'Delete user'}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -1645,7 +1410,11 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search subscriptions..."
+                  placeholder={
+                    isCreatorWorkspace
+                      ? 'Search members by name or username...'
+                      : 'Search subscriptions...'
+                  }
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
@@ -1685,8 +1454,17 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                 <table className="w-full min-w-[800px]">
                   <thead className="bg-gray-700/50">
                     <tr>
-                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">User</th>
+                      <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">
+                        {isCreatorWorkspace ? 'Member' : 'User'}
+                      </th>
+                      {isCreatorWorkspace ? (
+                        <>
+                          <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">WhatsApp</th>
+                          <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">WhatsApp Group</th>
+                        </>
+                      ) : null}
                       <th className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Months</th>
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Country</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Start Date</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">End Date</th>
                       <th className="px-6 py-4 text-left text-xs font-semibold text-gray-300 uppercase tracking-wider">Status</th>
@@ -1697,8 +1475,8 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                   <tbody className="divide-y divide-gray-700/50">
                     {subscriptions.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-6 py-12 text-center text-gray-400">
-                          No subscriptions found
+                        <td colSpan={isCreatorWorkspace ? 10 : 8} className="px-6 py-12 text-center text-gray-400">
+                          {isCreatorWorkspace ? 'No members yet' : 'No subscriptions found'}
                         </td>
                       </tr>
                     ) : (
@@ -1708,7 +1486,43 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                             <div className="font-medium text-white">{sub.user?.name || 'N/A'}</div>
                             <div className="text-sm text-gray-400">@{sub.user?.tiktokUsername || 'N/A'}</div>
                           </td>
+                          {isCreatorWorkspace ? (
+                            <>
+                              <td className="px-6 py-4 text-gray-300">{sub.user?.whatsappNumber || '—'}</td>
+                              <td className="px-6 py-4">
+                                {sub.user?.addedToWhatsApp ? (
+                                  <span className="inline-flex items-center gap-2">
+                                    <span className="inline-flex items-center gap-1.5 text-emerald-400 text-sm">
+                                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                                      Added
+                                    </span>
+                                    <button
+                                      onClick={() => handleMarkWhatsAppRemoved(sub.user)}
+                                      className="text-xs text-amber-400 hover:text-amber-300 underline"
+                                      title="Mark as removed from WhatsApp group"
+                                    >
+                                      Mark removed
+                                    </button>
+                                  </span>
+                                ) : String(sub.status).toUpperCase() === 'ACTIVE' ? (
+                                  <button
+                                    onClick={() => handleConfirmWhatsApp(sub.user)}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition"
+                                    title="Mark this member as added to the WhatsApp group"
+                                  >
+                                    <MessageCircle className="w-4 h-4 shrink-0" />
+                                    Add to group
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-gray-500">Active members only</span>
+                                )}
+                              </td>
+                            </>
+                          ) : null}
                           <td className="px-6 py-4 text-gray-300">{sub.months} month{sub.months !== 1 ? 's' : ''}</td>
+                          <td className="px-6 py-4 text-gray-300 text-sm">
+                            {supportCountryLabel(sub.checkoutCountry)}
+                          </td>
                           <td className="px-6 py-4 text-gray-300 text-sm">{formatDate(sub.startDate)}</td>
                           <td className="px-6 py-4 text-gray-300 text-sm">{formatDate(sub.endDate)}</td>
                           <td className="px-6 py-4">
@@ -1718,14 +1532,32 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                           </td>
                           <td className="px-6 py-4 text-gray-300 font-medium">{formatAmountForRole(Number(sub.amount))}</td>
                           <td className="px-6 py-4">
-                            {isAdminOrSuper() && (
-                              <button
-                                onClick={() => handleEditSubscription(sub)}
-                                className="p-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 rounded-lg transition"
-                                title="Edit subscription"
-                              >
-                                <Edit className="w-4 h-4" />
-                              </button>
+                            {(isCreatorWorkspace || isAdminOrSuper()) && (
+                              <div className="flex items-center gap-1">
+                                {isCreatorWorkspace && sub.user?.id ? (
+                                  <button
+                                    onClick={() => handleEditUser(sub.user)}
+                                    className="p-2 text-gray-400 hover:text-white hover:bg-gray-500/10 rounded-lg transition"
+                                    title="Edit member contact"
+                                  >
+                                    <UserIcon className="w-4 h-4" />
+                                  </button>
+                                ) : null}
+                                <button
+                                  onClick={() => handleEditSubscription(sub)}
+                                  className="p-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 rounded-lg transition"
+                                  title="Edit membership"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteSubscription(sub)}
+                                  className="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition"
+                                  title="Delete membership"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -1917,7 +1749,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                             <div className="font-medium text-white">{payment.user?.name || 'N/A'}</div>
                             <div className="text-sm text-gray-400">{payment.user?.mpesaMobile || 'N/A'}</div>
                           </td>
-                          <td className="px-6 py-4 text-gray-300 font-semibold">{formatAmountForRole(Number(payment.amount ?? 0))}</td>
+                          <td className="px-6 py-4 text-gray-300 font-semibold">{formatAmountForRole(Number(payment.amountKes ?? payment.amount ?? 0))}</td>
                           {paymentsPurpose === 'SUBSCRIPTION' ? (
                             <td className="px-6 py-4 text-gray-300">
                               {payment.months != null ? `${payment.months} month${payment.months !== 1 ? 's' : ''}` : '—'}
@@ -2171,7 +2003,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                               </div>
                             </td>
                             <td className="px-3 sm:px-6 py-4 text-gray-200 font-semibold whitespace-nowrap">
-                              {formatAmountForRole(Number(payment.amount ?? 0))}
+                              {formatAmountForRole(Number(payment.amountKes ?? payment.amount ?? 0))}
                             </td>
                             <td className="px-3 sm:px-6 py-4">
                               <span
@@ -2246,7 +2078,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
           <div className="space-y-6">
             {!isCreatorWorkspace ? (
               <p className="text-gray-400 text-sm">
-                Supporter rankings are available in the creator workspace (sign in as a streamer).
+                Supporter rankings are available in the creator workspace (sign in as a creator).
               </p>
             ) : creatorRankingsLoading ? (
               <div className="flex items-center justify-center gap-3 py-16 text-gray-400">
@@ -2312,7 +2144,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                   <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 overflow-hidden">
                     <div className="border-b border-gray-700/60 px-4 py-3 flex items-center gap-2">
                       <Trophy className="h-5 w-5 text-cyan-400" aria-hidden />
-                      <h3 className="text-base font-semibold text-white">Top subscribers</h3>
+                      <h3 className="text-base font-semibold text-white">Top members</h3>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full min-w-[360px] text-sm">
@@ -2858,6 +2690,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                   [
                     ['today', 'Today'],
                     ['yesterday', 'Yesterday'],
+                    ['thisWeek', 'This week'],
                     ['last7', 'Last 7 days'],
                     ['last30', 'Last 30 days'],
                   ] as const
@@ -2956,35 +2789,53 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                     {revenueData.totalCount === 1 ? '' : 's'}
                   </div>
 
-                  <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-200/80">
-                        Total
+                  <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                    <div className="rounded-xl border border-slate-500/30 bg-slate-500/10 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">
+                        Gross payments
                       </p>
                       <p className="text-2xl font-bold text-white mt-1">
-                        {formatAmountForRole(revenueData.totalKes)}
+                        {formatAmountForRole(revenueData.grossPaymentsKes ?? revenueData.totalKes)}
                       </p>
-                      <p className="text-xs text-gray-400 mt-1">All sources</p>
+                      <p className="text-xs text-gray-400 mt-1">What supporters paid</p>
                     </div>
                     <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 p-4">
                       <p className="text-xs font-semibold uppercase tracking-wide text-violet-200/80">
-                        Platform fee
+                        Platform fees
                       </p>
                       <p className="text-xl font-bold text-white mt-1">
                         {formatAmountForRole(revenueData.platformFeeKes)}
                       </p>
                       <p className="text-xs text-gray-400 mt-1">
-                        {Number(revenueData.platformFeePercent ?? 5).toFixed(2)}% per payment in range, summed
+                        Makulutu share at snapshot rates
                       </p>
                     </div>
                     <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
                       <p className="text-xs font-semibold uppercase tracking-wide text-emerald-200/80">
-                        Creator net
+                        Creator earnings
                       </p>
                       <p className="text-xl font-bold text-white mt-1">
-                        {formatAmountForRole(revenueData.creatorNetKes)}
+                        {formatAmountForRole(revenueData.creatorEarningsKes ?? revenueData.creatorNetKes)}
                       </p>
-                      <p className="text-xs text-gray-400 mt-1">Total minus summed per-payment fees</p>
+                      <p className="text-xs text-gray-400 mt-1">Allocated to streamers</p>
+                    </div>
+                    <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-rose-200/80">
+                        Refunds
+                      </p>
+                      <p className="text-xl font-bold text-white mt-1">
+                        {formatAmountForRole(revenueData.refundsKes ?? 0)}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">Gross reversed</p>
+                    </div>
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-200/80">
+                        Net revenue
+                      </p>
+                      <p className="text-2xl font-bold text-white mt-1">
+                        {formatAmountForRole(revenueData.netPlatformRevenueKes ?? revenueData.platformFeeKes)}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">Makulutu after refunded fees</p>
                     </div>
                     {revenueData.sources.map((s) => (
                       <div
@@ -3027,6 +2878,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                           <th className="px-4 py-3 text-right">Account review</th>
                           <th className="px-4 py-3 text-right">Other</th>
                           <th className="px-4 py-3 text-right">Total</th>
+                          <th className="px-4 py-3 text-right">Platform revenue</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-700/40">
@@ -3049,6 +2901,11 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                             </td>
                             <td className="px-4 py-2.5 text-right font-medium text-white">
                               {row.totalKes > 0 ? formatAmountForRole(row.totalKes) : '—'}
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-amber-200/90">
+                              {(row as { platformRevenueKes?: number }).platformRevenueKes
+                                ? formatAmountForRole((row as { platformRevenueKes?: number }).platformRevenueKes || 0)
+                                : '—'}
                             </td>
                           </tr>
                         ))}
@@ -3094,7 +2951,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
             ) : (
             <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 p-6">
               <h2 className="text-2xl font-bold text-white mb-2">
-                {isCreatorWorkspace ? 'Your support & OBS settings' : 'Platform settings'}
+                {isCreatorWorkspace ? 'Membership & overlay settings' : 'Platform settings'}
               </h2>
               {!isCreatorWorkspace ? (
                 <p className="text-sm text-slate-400 mb-6 max-w-3xl">
@@ -3103,7 +2960,7 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                 </p>
               ) : (
                 <p className="text-sm text-gray-500 mb-6 max-w-3xl">
-                  Applies to your public support link and your OBS timings — not other creators.
+                  Applies to your public support page and overlay timings — not other creators.
                 </p>
               )}
               
@@ -3194,6 +3051,55 @@ export function AdminDashboardView({ admin }: { admin: AdminDashboardModel }) {
                       {Number(settings.platformFeePercent ?? 5).toFixed(2)}%
                     </span>
                   </p>
+                  <p className="text-xs text-gray-400 mt-4 max-w-2xl">
+                    After settlement, streamers send available earnings to M-Pesa through Paystack.
+                    These limits apply to every automatic payout.
+                  </p>
+                  <div className="mt-6 grid sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Settlement hours</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={720}
+                        step={1}
+                        value={settingsForm.settlementPeriodHours ?? 24}
+                        onChange={(e) =>
+                          setSettingsForm({ ...settingsForm, settlementPeriodHours: Number(e.target.value) })
+                        }
+                        disabled={adminUser?.role !== 'SUPER_ADMIN'}
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Min withdrawal (KES)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={settingsForm.minWithdrawalKes ?? 500}
+                        onChange={(e) =>
+                          setSettingsForm({ ...settingsForm, minWithdrawalKes: Number(e.target.value) })
+                        }
+                        disabled={adminUser?.role !== 'SUPER_ADMIN'}
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white disabled:opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-2">Withdrawal fee (KES)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={settingsForm.withdrawalFeeKes ?? 0}
+                        onChange={(e) =>
+                          setSettingsForm({ ...settingsForm, withdrawalFeeKes: Number(e.target.value) })
+                        }
+                        disabled={adminUser?.role !== 'SUPER_ADMIN'}
+                        className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white disabled:opacity-60"
+                      />
+                    </div>
+                  </div>
                 </div>
                 ) : null}
 

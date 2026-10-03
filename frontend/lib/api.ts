@@ -35,28 +35,30 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Clear auth and redirect to login
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('adminToken');
-        localStorage.removeItem('adminUser');
-        window.location.href = '/login';
-      }
+    const status = error.response?.status
+    const reqUrl = String(error.config?.url || '')
+    const isLoginAttempt = reqUrl.includes('/auth/login')
+    if (status === 401 && typeof window !== 'undefined' && !isLoginAttempt) {
+      localStorage.removeItem('adminToken')
+      localStorage.removeItem('adminUser')
+      window.location.href = '/login'
     }
-    return Promise.reject(error);
+    return Promise.reject(error)
   }
-);
+)
 
 export interface RegisterSubscriptionDto {
   name: string;
   tiktokUsername: string;
-  mpesaMobile: string;
-  whatsappNumber: string;
+  mpesaMobile?: string;
+  whatsappNumber?: string;
   months: number;
   monthlyPrice?: number;
   creatorSlug?: string;
-  /** `mpesa` (default): STK push. `paypal`: redirect to PayPal checkout. */
-  paymentMethod?: 'mpesa' | 'paypal';
+  /** `mpesa` (default): STK. `paypal`: PayPal. `paystack`: hosted card / international. */
+  paymentMethod?: 'mpesa' | 'paypal' | 'paystack';
+  email?: string;
+  checkoutCountry?: string;
 }
 
 export interface PaymentResponse {
@@ -68,8 +70,10 @@ export interface PaymentResponse {
   payment: {
     id: string;
     amount: number;
+    amountKes?: number;
     months: number;
     status: string;
+    statusUpper?: string;
     transactionRequestId?: string;
   };
   message: string;
@@ -166,7 +170,7 @@ export type StreamAlertPlatform =
 
 export interface StreamAlertCheckoutDto {
   displayHandle: string;
-  mpesaMobile: string;
+  mpesaMobile?: string;
   platform: StreamAlertPlatform;
   /** KES amount; minimum 10. */
   amount: number;
@@ -174,11 +178,14 @@ export interface StreamAlertCheckoutDto {
   /** Optional TikTok clip URL (https); server validates embed. */
   videoUrl?: string;
   creatorSlug?: string;
+  paymentMethod?: 'mpesa' | 'paystack';
+  email?: string;
 }
 
 export interface StreamAlertCheckoutResponse {
   payment: { id: string; amount: number; status: string; transactionRequestId?: string };
   message: string;
+  approvalUrl?: string;
 }
 
 export const streamAlertApi = {
@@ -245,10 +252,12 @@ export interface PublicCreatorReward {
 
 export interface CreatorRewardCheckoutDto {
   displayName: string;
-  mpesaMobile: string;
+  mpesaMobile?: string;
   platform?: StreamAlertPlatform;
   message?: string;
   videoUrl?: string;
+  paymentMethod?: 'mpesa' | 'paystack';
+  email?: string;
 }
 
 export const creatorRewardApi = {

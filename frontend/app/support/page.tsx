@@ -7,6 +7,7 @@ import { z } from 'zod'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import {
+  CalendarCheck,
   CheckCircle,
   Gift,
   Loader2,
@@ -18,8 +19,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { SiteNav } from '@/components/SiteNav'
-import { PlatformBrand } from '@/components/PlatformBrand'
-import { SITE_NAME, SITE_NAME_CLASS } from '@/lib/site-brand'
+import { SiteFooter } from '@/components/SiteFooter'
 import { RewardTierCatalogCard } from '@/app/support/RewardTierCatalogCard'
 import Swal from 'sweetalert2'
 import {
@@ -35,6 +35,27 @@ import {
   type StreamAlertLimits,
   type StreamAlertPlatform,
 } from '@/lib/api'
+import { formatApiErrorMessage } from '@/lib/api-origin'
+import { fanAuthApi, fanPortalApi, getFanToken } from '@/lib/fan-auth'
+import { toCompactTikTokClipRef } from '@/lib/tiktok-clip'
+import { CheckoutCountryField } from '@/components/support/CheckoutCountryField'
+import {
+  isKenyaCheckout,
+  readStoredCheckoutCountry,
+  writeStoredCheckoutCountry,
+  type SupportCountryCode,
+} from '@/lib/support-countries'
+import {
+  formatSupportPrice,
+  formatSupportPriceHint,
+  kesToUsd,
+  usdToKes,
+} from '@/lib/fx'
+
+function checkoutPaymentId(res: unknown): string | null {
+  const r = res as { payment?: { id?: string }; id?: string }
+  return r.payment?.id || r.id || null
+}
 
 const DEFAULT_STREAM_LIMITS: StreamAlertLimits = {
   minKes: 10,
@@ -95,9 +116,10 @@ async function loadFallbackSupportCatalog(
 
 const subscriptionSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
-  tiktokUsername: z.string().min(1, 'TikTok username is required'),
-  mpesaMobile: z.string().regex(/^(254|0)[0-9]{9}$/, 'Invalid phone number format'),
-  whatsappNumber: z.string().regex(/^(254|0)[0-9]{9}$/, 'Invalid phone number format'),
+  tiktokUsername: z.string().min(1, 'Username is required'),
+  mpesaMobile: z.string().optional(),
+  whatsappNumber: z.string().optional(),
+  email: z.string().optional(),
   months: z.number().min(1).max(12),
   monthlyPrice: z.number().optional(),
 })
@@ -116,11 +138,12 @@ const streamPlatformSchema = z.enum([
 const streamAlertSchema = z
   .object({
     displayHandle: z.string().min(1, 'Handle is required').max(64),
-    mpesaMobile: z.string().regex(/^(254|0)[0-9]{9}$/, 'Invalid phone number format'),
+    mpesaMobile: z.string().optional(),
+    email: z.string().optional(),
     platform: streamPlatformSchema,
     amount: z
       .number({ invalid_type_error: 'Enter a valid amount' })
-      .min(1, 'Enter a valid amount')
+      .min(0.01, 'Enter a valid amount')
       .max(10_000_000, 'Amount is too large'),
     message: z
       .string()
@@ -169,28 +192,6 @@ const streamAlertSchema = z
 
 type StreamAlertFormData = z.infer<typeof streamAlertSchema>
 
-/** Returns https URL string or null if not a valid TikTok video page URL. */
-function normalizeTikTokShoutoutVideoUrl(raw: string): string | null {
-  const trimmed = raw.trim()
-  if (!trimmed) return null
-  let u: URL
-  try {
-    u = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`)
-  } catch {
-    return null
-  }
-  if (u.protocol !== 'https:') return null
-  const h = u.hostname.toLowerCase()
-  const allowed =
-    h === 'tiktok.com' ||
-    h === 'www.tiktok.com' ||
-    h === 'm.tiktok.com' ||
-    h === 'vm.tiktok.com' ||
-    h === 'vt.tiktok.com' ||
-    h.endsWith('.tiktok.com')
-  if (!allowed) return null
-  return trimmed.includes('://') ? trimmed : `https://${trimmed}`
-}
 
 const STREAM_PLATFORM_OPTIONS: { value: StreamAlertPlatform; label: string }[] = [
   { value: 'tiktok', label: 'TikTok' },
@@ -212,7 +213,17 @@ function SupportPageInner() {
   >('idle')
   const [paymentId, setPaymentId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [membershipPayMethod, setMembershipPayMethod] = useState<'mpesa' | 'paypal'>('mpesa')
+  const [membershipPayMethod, setMembershipPayMethod] = useState<
+    'mpesa' | 'paypal' | 'paystack'
+  >('mpesa')
+  const [streamPayMethod, setStreamPayMethod] = useState<'mpesa' | 'paystack'>('mpesa')
+  const [membershipCountry, setMembershipCountry] = useState<SupportCountryCode>('KE')
+  const [shoutoutCountry, setShoutoutCountry] = useState<SupportCountryCode>('KE')
+  const [rewardCountries, setRewardCountries] = useState<Record<string, SupportCountryCode>>({})
+  const membershipKenya = isKenyaCheckout(membershipCountry)
+  const shoutKenya = isKenyaCheckout(shoutoutCountry)
+  const countryForReward = (id: string): SupportCountryCode =>
+    rewardCountries[id] ?? 'KE'
 
   const [streamSubmitting, setStreamSubmitting] = useState(false)
   const [streamPaymentStatus, setStreamPaymentStatus] = useState<
@@ -229,6 +240,8 @@ function SupportPageInner() {
   const [tierForm, setTierForm] = useState({
     displayName: '',
     mpesaMobile: '',
+    email: '',
+    paymentMethod: 'mpesa' as 'mpesa' | 'paystack',
     platform: 'tiktok' as StreamAlertPlatform,
     message: '',
     videoUrl: '',
@@ -238,6 +251,12 @@ function SupportPageInner() {
     'idle' | 'pending' | 'checking' | 'success' | 'failed'
   >('idle')
   const [tierError, setTierError] = useState<string | null>(null)
+  const [fanPrefill, setFanPrefill] = useState<{
+    name: string
+    handle: string
+    phone: string
+    email: string
+  } | null>(null)
 
   const {
     register,
@@ -245,11 +264,15 @@ function SupportPageInner() {
     formState: { errors },
     watch,
     reset,
+    setValue,
   } = useForm<SubscriptionFormData>({
     resolver: zodResolver(subscriptionSchema),
     defaultValues: {
       months: 1,
       monthlyPrice: 1,
+      email: '',
+      mpesaMobile: '',
+      whatsappNumber: '',
     },
   })
 
@@ -259,6 +282,7 @@ function SupportPageInner() {
     formState: { errors: streamErrors },
     reset: resetStream,
     watch: watchStream,
+    setValue: setStreamValue,
   } = useForm<StreamAlertFormData>({
     resolver: zodResolver(streamAlertSchema),
     defaultValues: {
@@ -266,26 +290,91 @@ function SupportPageInner() {
       message: '',
       videoUrl: '',
       amount: 10,
+      email: '',
+      mpesaMobile: '',
     },
   })
 
-  const streamAmountKes = watchStream('amount')
+  const streamEnteredAmount = watchStream('amount')
   const streamVideoUrlWatch = watchStream('videoUrl')
   const streamWantsVideo = !!streamVideoUrlWatch?.trim()
   const streamAmountMin = streamWantsVideo
     ? streamLimits.minKesWithVideo
     : streamLimits.minKes
+  const shoutoutKes = shoutKenya
+    ? Number(streamEnteredAmount)
+    : usdToKes(Number(streamEnteredAmount))
+  const streamMinDisplay = shoutKenya ? streamAmountMin : kesToUsd(streamAmountMin)
+  const streamMaxDisplay = shoutKenya
+    ? streamLimits.maxKes
+    : kesToUsd(streamLimits.maxKes)
 
   const months = watch('months')
   const totalAmount = months * monthlyPrice
 
+  useEffect(() => {
+    setMembershipCountry(readStoredCheckoutCountry('membership'))
+    setShoutoutCountry(readStoredCheckoutCountry('shoutout'))
+  }, [])
+
+  useEffect(() => {
+    writeStoredCheckoutCountry(membershipCountry, 'membership')
+    if (!membershipKenya && membershipPayMethod === 'mpesa') {
+      setMembershipPayMethod('paystack')
+    }
+  }, [membershipCountry, membershipKenya])
+
+  useEffect(() => {
+    writeStoredCheckoutCountry(shoutoutCountry, 'shoutout')
+    setStreamValue(
+      'amount',
+      shoutKenya ? Math.max(1, streamLimits.minKes) : Math.max(1, kesToUsd(streamLimits.minKes)),
+    )
+    if (!shoutKenya) setStreamPayMethod('paystack')
+  }, [shoutoutCountry, shoutKenya])
+
   const paypalCancelFlag = searchParams.get('paypal_cancel')
+  useEffect(() => {
+    if (!getFanToken()) return
+    let cancelled = false
+    void fanAuthApi
+      .me()
+      .then((me) => {
+        if (cancelled) return
+        const phone = (me.phone || '').trim()
+        const name = (me.name || '').trim()
+        const handle = (me.tiktokUsername || name || '').trim()
+        const email = (me.email || '').trim()
+        setFanPrefill({ name, handle, phone, email })
+        if (phone) {
+          setValue('mpesaMobile', phone)
+          setValue('whatsappNumber', phone)
+          setStreamValue('mpesaMobile', phone)
+          setTierForm((t) => ({ ...t, mpesaMobile: phone }))
+        }
+        if (email) {
+          setValue('email', email)
+          setStreamValue('email', email)
+          setTierForm((t) => ({ ...t, email }))
+        }
+        if (name) setValue('name', name)
+        if (handle) {
+          setValue('tiktokUsername', handle)
+          setStreamValue('displayHandle', handle)
+          setTierForm((t) => ({ ...t, displayName: handle, ...(phone ? { mpesaMobile: phone } : {}) }))
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [setValue, setStreamValue])
   useEffect(() => {
     if (paypalCancelFlag !== '1') return
     void Swal.fire({
       icon: 'info',
       title: 'PayPal checkout cancelled',
-      text: 'No charge was made. You can try again or choose M-Pesa.',
+      text: 'No charge was made. You can try again or choose M-Pesa or card.',
       confirmButtonColor: '#9333ea',
     })
     const url = new URL(window.location.href)
@@ -314,7 +403,15 @@ function SupportPageInner() {
         if (mem) {
           const price = mem.monthlyPriceKes
           setMonthlyPrice(price)
-          reset({ months: 1, monthlyPrice: price })
+          reset({
+            months: 1,
+            monthlyPrice: price,
+            ...(fanPrefill?.name ? { name: fanPrefill.name } : {}),
+            ...(fanPrefill?.handle ? { tiktokUsername: fanPrefill.handle } : {}),
+            ...(fanPrefill?.phone
+              ? { mpesaMobile: fanPrefill.phone, whatsappNumber: fanPrefill.phone }
+              : {}),
+          })
         } else {
           void subscriptionApi
             .getMonthlyPrice()
@@ -322,7 +419,15 @@ function SupportPageInner() {
               if (cancelled) return
               const price = response.monthlyPrice || 1
               setMonthlyPrice(price)
-              reset({ months: 1, monthlyPrice: price })
+              reset({
+                months: 1,
+                monthlyPrice: price,
+                ...(fanPrefill?.name ? { name: fanPrefill.name } : {}),
+                ...(fanPrefill?.handle ? { tiktokUsername: fanPrefill.handle } : {}),
+                ...(fanPrefill?.phone
+                  ? { mpesaMobile: fanPrefill.phone, whatsappNumber: fanPrefill.phone }
+                  : {}),
+              })
             })
             .catch(() => {})
         }
@@ -439,8 +544,8 @@ function SupportPageInner() {
 
           Swal.fire({
             icon: 'success',
-            title: 'Shoutout paid',
-            text: 'Your alert will be sent to the stream overlay when processing finishes.',
+            title: 'Session shout paid',
+            text: 'The creator will play your shout during the next live stream.',
             confirmButtonColor: '#06b6d4',
             timer: 4000,
             timerProgressBar: true,
@@ -500,7 +605,7 @@ function SupportPageInner() {
           Swal.fire({
             icon: 'success',
             title: 'Payment completed',
-            text: 'Your tier alert will be sent to the stream overlay when processing finishes.',
+            text: 'Your package is confirmed. The creator will follow up if the tier includes a live shout.',
             confirmButtonColor: '#d97706',
             timer: 4000,
             timerProgressBar: true,
@@ -509,6 +614,8 @@ function SupportPageInner() {
           setTierForm({
             displayName: '',
             mpesaMobile: '',
+            email: fanPrefill?.email || '',
+            paymentMethod: 'mpesa',
             platform: 'tiktok',
             message: '',
             videoUrl: '',
@@ -559,7 +666,18 @@ function SupportPageInner() {
       })
       return
     }
-    if (!/^(254|0)[0-9]{9}$/.test(tierForm.mpesaMobile.trim())) {
+    if (tierForm.paymentMethod === 'paystack') {
+      const email = (tierForm.email || fanPrefill?.email || '').trim()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        await Swal.fire({
+          icon: 'error',
+          title: 'Email required',
+          text: 'Paystack needs an email for card and international checkout.',
+          confirmButtonColor: '#dc2626',
+        })
+        return
+      }
+    } else if (!/^(254|0)[0-9]{9}$/.test(tierForm.mpesaMobile.trim())) {
       await Swal.fire({
         icon: 'error',
         title: 'Invalid M-Pesa number',
@@ -576,12 +694,12 @@ function SupportPageInner() {
         await Swal.fire({
           icon: 'error',
           title: 'Clip not allowed for this tier',
-          text: `This tier is KES ${reward.amountKes}; with a clip the price must be at least KES ${streamLimits.minKesWithVideo}.`,
+          text: `This tier is ${formatSupportPrice(reward.amountKes, isKenyaCheckout(countryForReward(reward.id)))}; with a clip the price must be at least ${formatSupportPrice(streamLimits.minKesWithVideo, isKenyaCheckout(countryForReward(reward.id)))}.`,
           confirmButtonColor: '#dc2626',
         })
         return
       }
-      const norm = normalizeTikTokShoutoutVideoUrl(videoTrim)
+      const norm = toCompactTikTokClipRef(videoTrim)
       if (!norm) {
         await Swal.fire({
           icon: 'error',
@@ -602,14 +720,40 @@ function SupportPageInner() {
     setTierPaymentStatus('pending')
 
     try {
-      const res = await creatorRewardApi.checkout(reward.id, {
-        displayName,
-        mpesaMobile: tierForm.mpesaMobile.trim(),
-        platform: tierForm.platform,
-        ...(messageTrim ? { message: messageTrim.slice(0, maxLen) } : {}),
-        ...(videoNormalized ? { videoUrl: videoNormalized } : {}),
-      })
+      const paystackPayload =
+        tierForm.paymentMethod === 'paystack'
+          ? {
+              paymentMethod: 'paystack' as const,
+              email: (tierForm.email || fanPrefill?.email || '').trim(),
+            }
+          : {}
+      const fanLoggedIn = Boolean(getFanToken())
+      const res = fanLoggedIn
+        ? await fanPortalApi.checkoutReward(reward.id, {
+            displayName,
+            mpesaMobile: tierForm.mpesaMobile.trim() || undefined,
+            platform: tierForm.platform,
+            ...(messageTrim ? { message: messageTrim.slice(0, maxLen) } : {}),
+            ...(videoNormalized ? { videoUrl: videoNormalized } : {}),
+            ...paystackPayload,
+          })
+        : await creatorRewardApi.checkout(reward.id, {
+            displayName,
+            mpesaMobile: tierForm.mpesaMobile.trim() || undefined,
+            platform: tierForm.platform,
+            ...(messageTrim ? { message: messageTrim.slice(0, maxLen) } : {}),
+            ...(videoNormalized ? { videoUrl: videoNormalized } : {}),
+            ...paystackPayload,
+          })
 
+      const approvalUrl = (res as { approvalUrl?: string }).approvalUrl
+      if (approvalUrl) {
+        window.location.assign(approvalUrl)
+        return
+      }
+
+      const pid = checkoutPaymentId(res)
+      if (!pid) throw new Error('No payment id returned')
       setTierPaymentStatus('checking')
 
       Swal.fire({
@@ -622,11 +766,13 @@ function SupportPageInner() {
         timerProgressBar: true,
       })
 
-      void pollTierPaymentStatus(res.payment.id)
+      void pollTierPaymentStatus(pid)
     } catch (err: unknown) {
       const errorMessage =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
-        'Could not start payment. Check your number and try again.'
+        err instanceof Error
+          ? err.message
+          : (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+            'Could not start payment. Check your number and try again.'
       setTierError(errorMessage)
       setTierPaymentStatus('failed')
       setTierSubmitting(false)
@@ -645,11 +791,71 @@ function SupportPageInner() {
     setError(null)
 
     try {
+      if (membershipPayMethod === 'mpesa') {
+        if (!/^(254|0)[0-9]{9}$/.test((data.mpesaMobile || '').trim())) {
+          await Swal.fire({
+            icon: 'error',
+            title: 'Invalid M-Pesa number',
+            text: 'Use 254XXXXXXXXX or 0XXXXXXXXX.',
+            confirmButtonColor: '#dc2626',
+          })
+          setIsSubmitting(false)
+          return
+        }
+      } else if (!getFanToken()) {
+        const email = (data.email || '').trim()
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          await Swal.fire({
+            icon: 'error',
+            title: 'Email required',
+            text: 'Paystack needs an email for card and international checkout.',
+            confirmButtonColor: '#dc2626',
+          })
+          setIsSubmitting(false)
+          return
+        }
+      }
+
+      const fanLoggedIn = Boolean(getFanToken() && creatorSlug)
+      if (fanLoggedIn) {
+        const response = await fanPortalApi.subscribe({
+          creatorSlug,
+          months: data.months,
+          paymentMethod: membershipPayMethod,
+          mpesaMobile: data.mpesaMobile,
+          checkoutCountry: membershipCountry,
+        })
+        const approvalUrl = (response as { approvalUrl?: string }).approvalUrl
+        if (approvalUrl) {
+          window.location.assign(approvalUrl)
+          return
+        }
+        const pid = checkoutPaymentId(response)
+        if (!pid) throw new Error('No payment id returned')
+        setPaymentId(pid)
+        setPaymentStatus('checking')
+        Swal.fire({
+          icon: 'info',
+          title: 'M-Pesa prompt sent',
+          text: 'Complete the payment on your phone when prompted.',
+          confirmButtonColor: '#9333ea',
+          confirmButtonText: 'OK',
+          timer: 5000,
+          timerProgressBar: true,
+        })
+        pollPaymentStatus(pid)
+        return
+      }
+
       const response = await subscriptionApi.register({
         ...data,
         monthlyPrice: monthlyPrice,
         ...(creatorSlug ? { creatorSlug } : {}),
         paymentMethod: membershipPayMethod,
+        checkoutCountry: membershipCountry,
+        ...(membershipPayMethod === 'paystack'
+          ? { email: (data.email || fanPrefill?.email || '').trim() }
+          : {}),
       } as RegisterSubscriptionDto)
 
       if (response.approvalUrl) {
@@ -689,26 +895,27 @@ function SupportPageInner() {
   }
 
   const onStreamSubmit = async (data: StreamAlertFormData) => {
+    const amountKes = shoutKenya ? data.amount : usdToKes(data.amount)
     const hasVideo = !!data.videoUrl?.trim()
     const minReq = hasVideo
       ? streamLimits.minKesWithVideo
       : streamLimits.minKes
-    if (data.amount < minReq) {
+    if (amountKes < minReq) {
       await Swal.fire({
         icon: 'error',
         title: 'Amount too low',
         text: hasVideo
-          ? `With a clip URL, the minimum is KES ${minReq}.`
-          : `Minimum shoutout amount is KES ${minReq}.`,
+          ? `With a clip URL, the minimum is ${formatSupportPrice(minReq, shoutKenya)}.`
+          : `Minimum shoutout amount is ${formatSupportPrice(minReq, shoutKenya)}.`,
         confirmButtonColor: '#dc2626',
       })
       return
     }
-    if (data.amount > streamLimits.maxKes) {
+    if (amountKes > streamLimits.maxKes) {
       await Swal.fire({
         icon: 'error',
         title: 'Amount too high',
-        text: `Maximum shoutout amount is KES ${streamLimits.maxKes}.`,
+        text: `Maximum shoutout amount is ${formatSupportPrice(streamLimits.maxKes, shoutKenya)}.`,
         confirmButtonColor: '#dc2626',
       })
       return
@@ -721,39 +928,99 @@ function SupportPageInner() {
     try {
       const trimmed = data.message?.trim()
       const videoTrim = data.videoUrl?.trim()
-      const res = await streamAlertApi.checkout({
-        displayHandle: data.displayHandle.trim().replace(/^@+/, ''),
-        mpesaMobile: data.mpesaMobile,
-        platform: data.platform,
-        amount: data.amount,
-        ...(creatorSlug ? { creatorSlug } : {}),
-        ...(trimmed ? { message: trimmed } : {}),
-        ...(videoTrim
+      const compactClip = videoTrim ? toCompactTikTokClipRef(videoTrim) : null
+      if (videoTrim && !compactClip) {
+        setStreamSubmitting(false)
+        setStreamPaymentStatus('idle')
+        await Swal.fire({
+          icon: 'error',
+          title: 'Invalid clip URL',
+          text: 'Use a TikTok video or photo link (…/video/… or …/photo/…).',
+          confirmButtonColor: '#dc2626',
+        })
+        return
+      }
+      const videoPayload = compactClip ? { videoUrl: compactClip } : {}
+      const paystackPayload =
+        streamPayMethod === 'paystack'
           ? {
-              videoUrl: videoTrim.includes('://')
-                ? videoTrim
-                : `https://${videoTrim}`,
+              paymentMethod: 'paystack' as const,
+              email: (data.email || fanPrefill?.email || '').trim(),
             }
-          : {}),
-      })
+          : {}
+      if (streamPayMethod === 'paystack') {
+        const email = paystackPayload.email
+        if (!getFanToken() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '')) {
+          setStreamSubmitting(false)
+          setStreamPaymentStatus('idle')
+          await Swal.fire({
+            icon: 'error',
+            title: 'Email required',
+            text: 'Paystack needs an email for card and international checkout.',
+            confirmButtonColor: '#dc2626',
+          })
+          return
+        }
+      } else if (!/^(254|0)[0-9]{9}$/.test((data.mpesaMobile || '').trim())) {
+        setStreamSubmitting(false)
+        setStreamPaymentStatus('idle')
+        await Swal.fire({
+          icon: 'error',
+          title: 'Invalid M-Pesa number',
+          text: 'Use 254XXXXXXXXX or 0XXXXXXXXX.',
+          confirmButtonColor: '#dc2626',
+        })
+        return
+      }
+      const fanLoggedIn = Boolean(getFanToken() && creatorSlug)
+      const res = fanLoggedIn
+        ? await fanPortalApi.shoutout({
+            creatorSlug,
+            amount: amountKes,
+            displayHandle: data.displayHandle.trim().replace(/^@+/, ''),
+            platform: data.platform,
+            mpesaMobile: data.mpesaMobile,
+            ...(trimmed ? { message: trimmed } : {}),
+            ...videoPayload,
+            ...paystackPayload,
+          })
+        : await streamAlertApi.checkout({
+            displayHandle: data.displayHandle.trim().replace(/^@+/, ''),
+            mpesaMobile: data.mpesaMobile,
+            platform: data.platform,
+            amount: amountKes,
+            ...(creatorSlug ? { creatorSlug } : {}),
+            ...(trimmed ? { message: trimmed } : {}),
+            ...videoPayload,
+            ...paystackPayload,
+          })
 
-      setStreamPaymentId(res.payment.id)
+      const approvalUrl = (res as { approvalUrl?: string }).approvalUrl
+      if (approvalUrl) {
+        window.location.assign(approvalUrl)
+        return
+      }
+
+      const shoutId = checkoutPaymentId(res)
+      if (!shoutId) throw new Error('No payment id returned')
+      setStreamPaymentId(shoutId)
       setStreamPaymentStatus('checking')
 
       Swal.fire({
         icon: 'info',
         title: 'STK Push sent',
-        text: `Pay KES ${data.amount} on your phone to trigger the stream alert.`,
+        text: `Pay ${formatSupportPrice(data.amount, true)} on your phone to send the shoutout.`,
         confirmButtonColor: '#06b6d4',
         timer: 5000,
         timerProgressBar: true,
       })
 
-      pollStreamPaymentStatus(res.payment.id)
+      pollStreamPaymentStatus(shoutId)
     } catch (err: any) {
-      const errorMessage =
-        err.response?.data?.message ||
-        'Could not start payment. Check your number and try again.'
+      const errorMessage = formatApiErrorMessage(
+        err.response?.data ?? err.message,
+        'Could not start payment. Check your number and try again.',
+      )
       setStreamError(errorMessage)
       setStreamPaymentStatus('failed')
       setStreamSubmitting(false)
@@ -775,12 +1042,12 @@ function SupportPageInner() {
     'mt-1.5 w-full rounded-xl border border-amber-500/25 bg-black/40 px-4 py-3 text-white placeholder-gray-500 transition focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/35'
   const labelCls = 'block text-sm font-medium text-gray-300'
 
-  const coreItems = useMemo(
-    () =>
-      (catalog?.items ?? []).filter(
-        (i): i is SupportCatalogMembershipItem | SupportCatalogShoutoutItem =>
-          i.kind === 'membership' || i.kind === 'shoutout',
-      ),
+  const membershipItems = useMemo(
+    () => (catalog?.items ?? []).filter((i): i is SupportCatalogMembershipItem => i.kind === 'membership'),
+    [catalog?.items],
+  )
+  const shoutoutItems = useMemo(
+    () => (catalog?.items ?? []).filter((i): i is SupportCatalogShoutoutItem => i.kind === 'shoutout'),
     [catalog?.items],
   )
   const rewardItems = useMemo(
@@ -788,17 +1055,27 @@ function SupportPageInner() {
       catalog?.items.filter((i): i is SupportCatalogRewardItem => i.kind === 'reward') ?? [],
     [catalog?.items],
   )
+
+  useEffect(() => {
+    if (rewardItems.length === 0) return
+    setRewardCountries((prev) => {
+      const next = { ...prev }
+      let changed = false
+      for (const item of rewardItems) {
+        if (!next[item.id]) {
+          next[item.id] = readStoredCheckoutCountry(`reward.${item.id}`)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [rewardItems])
   const showJumpNav =
-    (catalog?.items.length ?? 0) >= 4 || rewardItems.length >= 2 || coreItems.length >= 2
+    (catalog?.items.length ?? 0) >= 3 || rewardItems.length >= 2 || membershipItems.length + shoutoutItems.length >= 2
+  const bookHref = creatorSlug ? `/book/${encodeURIComponent(creatorSlug)}` : '/book'
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden scroll-smooth bg-[#0a0a0f] text-white">
-      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
-        <div className="absolute top-0 right-0 h-80 w-80 rounded-full bg-violet-600/12 blur-[100px]" />
-        <div className="absolute top-1/3 -left-24 h-72 w-72 rounded-full bg-fuchsia-600/10 blur-[90px]" />
-        <div className="absolute bottom-0 right-1/4 h-64 w-64 rounded-full bg-cyan-600/10 blur-[80px]" />
-      </div>
-
+    <div className="relative min-h-screen scroll-smooth text-white">
       <div className="relative z-10">
         <SiteNav />
 
@@ -814,8 +1091,7 @@ function SupportPageInner() {
               Support the stream
             </h1>
             <p className="mt-4 text-pretty text-gray-400 sm:text-lg">
-              Monthly membership, live shoutouts, and fixed-price tiers. All checkout is via M-Pesa. When there are
-              several sections, use the shortcuts below to jump.
+              Monthly membership, live shoutouts, and fixed-price tiers. Kenya fans pay with M-Pesa in KES; other countries see USD and pay by card (billed in KES). Pick your country on the option you want.
             </p>
           </header>
 
@@ -832,24 +1108,30 @@ function SupportPageInner() {
           <>
           {showJumpNav && (
             <nav
-              className="sticky top-0 z-20 -mx-4 mb-8 border-b border-white/10 bg-[#0a0a0f]/92 px-4 py-3 backdrop-blur-md md:mx-0 md:rounded-xl md:border md:border-white/10"
+              className="sticky top-[4.25rem] z-20 -mx-4 mb-8 border-b border-white/10 bg-[#07070c]/92 px-4 py-3 backdrop-blur-md md:mx-0 md:rounded-xl md:border md:border-white/10"
               aria-label="Jump to section"
             >
               <div className="mx-auto flex max-w-7xl flex-wrap gap-2">
-                {coreItems.some((i) => i.kind === 'membership') ? (
+                {membershipItems.length > 0 ? (
                   <a
                     href="#support-membership"
-                    className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:border-violet-500/45 hover:bg-violet-500/10 hover:text-violet-100"
+                    className="rounded-full border border-violet-500/40 bg-violet-500/15 px-3 py-1.5 text-xs font-semibold text-violet-100 transition hover:border-violet-500/60 hover:bg-violet-500/25"
                   >
-                    Membership
+                    1. Membership
                   </a>
                 ) : null}
-                {coreItems.some((i) => i.kind === 'shoutout') ? (
+                <a
+                  href={bookHref}
+                  className="rounded-full border border-emerald-500/35 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-100 transition hover:border-emerald-500/55 hover:bg-emerald-500/20"
+                >
+                  2. Coaching
+                </a>
+                {shoutoutItems.length > 0 ? (
                   <a
                     href="#support-shoutout"
                     className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:border-cyan-500/45 hover:bg-cyan-500/10 hover:text-cyan-100"
                   >
-                    Live shoutout
+                    3. Live shoutout
                   </a>
                 ) : null}
                 {rewardItems.length > 0 ? (
@@ -864,21 +1146,21 @@ function SupportPageInner() {
             </nav>
           )}
           <div className="mx-auto max-w-7xl space-y-14">
-          {coreItems.length > 0 ? (
-          <div className="grid grid-cols-1 gap-8 md:grid-cols-6 md:gap-x-6 md:gap-y-10 xl:gap-x-8">
-            {coreItems.map((item) =>
-              item.kind === 'membership' ? (
+          {membershipItems.length > 0 ? (
+          <div className="grid grid-cols-1 gap-8">
+            {membershipItems.map((item) => (
             <div
               key="membership"
               id="support-membership"
-              className="md:col-span-3 min-w-0 rounded-2xl border border-violet-500/20 bg-gradient-to-b from-violet-950/35 via-[#0d0d14]/90 to-[#0a0a0f] p-6 shadow-xl shadow-violet-950/20 sm:p-8"
+              className="scroll-mt-28 min-w-0 rounded-2xl border border-violet-500/20 bg-gradient-to-b from-violet-950/35 via-[#0d0d14]/90 to-[#0a0a0f] p-6 shadow-xl shadow-violet-950/20 sm:p-8"
             >
               <div className="mb-6 flex items-start gap-4">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-violet-300 ring-1 ring-violet-400/20">
                   <Gift className="h-6 w-6" aria-hidden />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-white sm:text-2xl">{item.title}</h2>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-violet-300/90">Start here</p>
+                  <h2 className="mt-1 text-xl font-bold text-white sm:text-2xl">{item.title}</h2>
                   {item.description ? (
                     <p className="mt-1 text-sm leading-relaxed text-gray-400">{item.description}</p>
                   ) : null}
@@ -887,7 +1169,7 @@ function SupportPageInner() {
 
               <ul className="mb-8 grid gap-3 sm:grid-cols-3">
                 {[
-                  { icon: Video, text: 'Streams & replays' },
+                  { icon: Video, text: 'Member streams & replays' },
                   { icon: Users, text: 'WhatsApp & Discord' },
                   { icon: Sparkles, text: 'Tutorials & updates' },
                 ].map(({ icon: Icon, text }) => (
@@ -906,7 +1188,7 @@ function SupportPageInner() {
                   <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/15 ring-1 ring-emerald-400/30">
                     <CheckCircle className="h-9 w-9 text-emerald-400" aria-hidden />
                   </div>
-                  <h3 className="text-2xl font-bold text-white">Subscription active</h3>
+                  <h3 className="text-2xl font-bold text-white">You&apos;re a member</h3>
                   <p className="mx-auto mt-3 max-w-sm text-sm text-gray-400">
                     You should receive the WhatsApp group link on the number you used at checkout.
                   </p>
@@ -938,6 +1220,13 @@ function SupportPageInner() {
                 </div>
               ) : (
                 <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+                  <CheckoutCountryField
+                    id="membership-country"
+                    value={membershipCountry}
+                    onChange={setMembershipCountry}
+                    selectClassName={`${inputBase} cursor-pointer appearance-none pr-10`}
+                  />
+
                   <div>
                     <label className={labelCls} htmlFor="sub-name">
                       Full name
@@ -948,7 +1237,7 @@ function SupportPageInner() {
 
                   <div>
                     <label className={labelCls} htmlFor="sub-tt">
-                      TikTok username
+                      Username / handle
                     </label>
                     <input
                       id="sub-tt"
@@ -962,6 +1251,7 @@ function SupportPageInner() {
                     )}
                   </div>
 
+                  {membershipKenya && membershipPayMethod !== 'paystack' ? (
                   <div>
                     <label className={labelCls} htmlFor="sub-mpesa">
                       M-Pesa number
@@ -978,7 +1268,9 @@ function SupportPageInner() {
                     )}
                     <p className="mt-1.5 text-xs text-gray-500">STK Push is sent to this number.</p>
                   </div>
+                  ) : null}
 
+                  {membershipKenya && membershipPayMethod !== 'paystack' ? (
                   <div>
                     <label className={labelCls} htmlFor="sub-wa">
                       WhatsApp number
@@ -995,6 +1287,25 @@ function SupportPageInner() {
                     )}
                     <p className="mt-1.5 text-xs text-gray-500">Group invite link is sent here.</p>
                   </div>
+                  ) : (
+                  <div>
+                    <label className={labelCls} htmlFor="sub-email">
+                      Email
+                    </label>
+                    <input
+                      id="sub-email"
+                      {...register('email')}
+                      type="email"
+                      className={inputBase}
+                      placeholder="you@email.com"
+                    />
+                    <p className="mt-1.5 text-xs text-gray-500">
+                      {getFanToken()
+                        ? 'Paystack uses this receipt email. Logged-in fans can keep the email on their account.'
+                        : 'Paystack hosted checkout. Prices shown in USD; the card is billed in KES.'}
+                    </p>
+                  </div>
+                  )}
 
                   <div>
                     <label className={labelCls} htmlFor="sub-months">
@@ -1008,11 +1319,11 @@ function SupportPageInner() {
                         backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E")`,
                       }}
                     >
-                      <option value={1}>1 month — KES {monthlyPrice}</option>
-                      <option value={2}>2 months — KES {monthlyPrice * 2}</option>
-                      <option value={3}>3 months — KES {monthlyPrice * 3}</option>
-                      <option value={6}>6 months — KES {monthlyPrice * 6}</option>
-                      <option value={12}>12 months — KES {monthlyPrice * 12}</option>
+                      <option value={1}>1 month — {formatSupportPrice(monthlyPrice, membershipKenya)}</option>
+                      <option value={2}>2 months — {formatSupportPrice(monthlyPrice * 2, membershipKenya)}</option>
+                      <option value={3}>3 months — {formatSupportPrice(monthlyPrice * 3, membershipKenya)}</option>
+                      <option value={6}>6 months — {formatSupportPrice(monthlyPrice * 6, membershipKenya)}</option>
+                      <option value={12}>12 months — {formatSupportPrice(monthlyPrice * 12, membershipKenya)}</option>
                     </select>
                   </div>
 
@@ -1025,6 +1336,7 @@ function SupportPageInner() {
                       role="group"
                       aria-labelledby="sub-pay-method-label"
                     >
+                      {membershipKenya ? (
                       <button
                         type="button"
                         onClick={() => setMembershipPayMethod('mpesa')}
@@ -1035,6 +1347,18 @@ function SupportPageInner() {
                         }`}
                       >
                         M-Pesa
+                      </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setMembershipPayMethod('paystack')}
+                        className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition ${
+                          membershipPayMethod === 'paystack'
+                            ? 'bg-violet-600 text-white shadow-md'
+                            : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                        }`}
+                      >
+                        Card
                       </button>
                       <button
                         type="button"
@@ -1051,19 +1375,27 @@ function SupportPageInner() {
                     <p className="mt-1.5 text-xs text-gray-500">
                       {membershipPayMethod === 'paypal'
                         ? 'You will be redirected to PayPal. Checkout is in USD (converted from your KES total); you return here after approving.'
-                        : 'STK Push is sent to your M-Pesa number below.'}
+                        : membershipPayMethod === 'paystack'
+                          ? 'You will be redirected to Paystack. Prices in USD; the card is billed in KES.'
+                          : 'STK Push is sent to your M-Pesa number.'}
                     </p>
                   </div>
 
                   <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-4">
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                       <span className="text-sm text-violet-200/80">Total due today</span>
-                      <span className="text-2xl font-bold tabular-nums text-white">KES {totalAmount}</span>
+                      <span className="text-2xl font-bold tabular-nums text-white">
+                        {formatSupportPrice(totalAmount, membershipKenya)}
+                      </span>
                     </div>
                     <p className="mt-2 text-xs text-gray-500">
                       {membershipPayMethod === 'paypal'
                         ? 'Charged once through PayPal (USD) for the selected period; your plan is still priced in KES on our side.'
-                        : 'Charged once via M-Pesa for the selected period.'}
+                        : membershipPayMethod === 'paystack'
+                          ? membershipKenya
+                            ? 'Charged once through Paystack in KES for the selected period.'
+                            : `${formatSupportPriceHint(totalAmount, false)} Charged once.`
+                          : 'Charged once via M-Pesa for the selected period.'}
                     </p>
                   </div>
 
@@ -1109,6 +1441,8 @@ function SupportPageInner() {
                       </>
                     ) : membershipPayMethod === 'paypal' ? (
                       <>Continue with PayPal</>
+                    ) : membershipPayMethod === 'paystack' ? (
+                      <>Continue with Paystack</>
                     ) : (
                       <>Pay with M-Pesa</>
                     )}
@@ -1123,11 +1457,40 @@ function SupportPageInner() {
                 </form>
               )}
             </div>
-            ) : (
+            ))}
+          </div>
+          ) : null}
+
+          {/* <section
+            id="support-coaching"
+            className="scroll-mt-28 rounded-2xl border border-emerald-500/25 bg-gradient-to-r from-emerald-950/40 via-[#0d0d14]/90 to-transparent p-6 sm:p-7"
+          >
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-emerald-200/90">Next</p>
+                <h2 className="mt-1 text-xl font-bold text-white sm:text-2xl">Book 1:1 coaching</h2>
+                <p className="mt-2 max-w-xl text-sm leading-relaxed text-gray-400">
+                  Membership keeps you close to the stream. A paid session is a tactics review or rank-push with the creator.
+                </p>
+              </div>
+              <a
+                href={bookHref}
+                className="inline-flex min-h-[48px] shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-500"
+              >
+                <CalendarCheck className="h-4 w-4" aria-hidden />
+                Book a session
+              </a>
+            </div>
+          </section> */}
+
+          {shoutoutItems.length > 0 ? (
+          <section className="scroll-mt-28 border-t border-white/10 pt-10 md:pt-12">
+            <p className="mb-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Optional extra</p>
+            {shoutoutItems.map((item) => (
             <div
               key="shoutout"
               id="support-shoutout"
-              className="md:col-span-3 min-w-0 rounded-2xl border border-cyan-500/25 bg-gradient-to-b from-cyan-950/30 via-[#0d0d14]/90 to-[#0a0a0f] p-6 shadow-xl shadow-cyan-950/20 sm:p-8"
+              className="scroll-mt-28 min-w-0 rounded-2xl border border-white/12 bg-gradient-to-b from-white/[0.04] via-[#0d0d14]/90 to-[#0a0a0f] p-6 sm:p-8"
             >
               <div className="mb-6 flex items-start gap-4">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-400/25">
@@ -1146,9 +1509,9 @@ function SupportPageInner() {
                   <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-cyan-500/15 ring-1 ring-cyan-400/30">
                     <CheckCircle className="h-9 w-9 text-cyan-400" aria-hidden />
                   </div>
-                  <p className="text-lg font-semibold text-white">Alert triggered</p>
+                  <p className="text-lg font-semibold text-white">Session shout queued</p>
                   <p className="mx-auto mt-2 max-w-sm text-sm text-gray-400">
-                    Thanks — you can send another shoutout whenever you like.
+                    Thanks — the creator will play this on stream.
                   </p>
                   <button
                     type="button"
@@ -1182,6 +1545,13 @@ function SupportPageInner() {
                 </div>
               ) : (
                 <form onSubmit={handleStreamSubmit(onStreamSubmit)} className="space-y-5">
+                  <CheckoutCountryField
+                    id="shoutout-country"
+                    value={shoutoutCountry}
+                    onChange={setShoutoutCountry}
+                    selectClassName={`${inputCyan} cursor-pointer appearance-none pr-10`}
+                  />
+
                   <div>
                     <label className={labelCls} htmlFor="sh-platform">
                       Platform
@@ -1234,7 +1604,7 @@ function SupportPageInner() {
                       rows={3}
                       maxLength={100}
                       className={`${inputCyan} min-h-[4.5rem] resize-y`}
-                      placeholder="Short line for the overlay"
+                      placeholder="What should they say on stream?"
                     />
                     {streamErrors.message && (
                       <p className="mt-1.5 text-sm text-red-400">{streamErrors.message.message}</p>
@@ -1243,7 +1613,7 @@ function SupportPageInner() {
 
                   <div>
                     <label className={labelCls} htmlFor="sh-clip">
-                      TikTok clip URL <span className="font-normal text-gray-500">(optional)</span>
+                      Clip URL <span className="font-normal text-gray-500">(optional)</span>
                     </label>
                     <input
                       id="sh-clip"
@@ -1260,19 +1630,20 @@ function SupportPageInner() {
 
                   <div>
                     <label className={labelCls} htmlFor="sh-amt">
-                      Amount (KES){' '}
+                      Amount ({shoutKenya ? 'KES' : 'USD'}){' '}
                       <span className="font-normal text-gray-500">
-                        min {streamAmountMin}
-                        {streamWantsVideo ? ' with clip' : ''} · max {streamLimits.maxKes}
+                        min {shoutKenya ? streamMinDisplay : streamMinDisplay.toFixed(2)}
+                        {streamWantsVideo ? ' with clip' : ''} · max{' '}
+                        {shoutKenya ? streamMaxDisplay : streamMaxDisplay.toFixed(2)}
                       </span>
                     </label>
                     <input
                       id="sh-amt"
                       {...registerStream('amount', { valueAsNumber: true })}
                       type="number"
-                      min={streamAmountMin}
-                      max={streamLimits.maxKes}
-                      step={1}
+                      min={shoutKenya ? streamAmountMin : kesToUsd(streamAmountMin)}
+                      max={shoutKenya ? streamLimits.maxKes : kesToUsd(streamLimits.maxKes)}
+                      step={shoutKenya ? 1 : 0.01}
                       className={`${inputCyan} [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
                       placeholder="10"
                     />
@@ -1281,6 +1652,43 @@ function SupportPageInner() {
                     )}
                   </div>
 
+                  <div>
+                    <span className={labelCls} id="sh-pay-method-label">
+                      Payment method
+                    </span>
+                    <div
+                      className="mt-2 flex gap-2 rounded-xl border border-cyan-500/20 bg-black/20 p-1"
+                      role="group"
+                      aria-labelledby="sh-pay-method-label"
+                    >
+                      {shoutKenya ? (
+                      <button
+                        type="button"
+                        onClick={() => setStreamPayMethod('mpesa')}
+                        className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition ${
+                          streamPayMethod === 'mpesa'
+                            ? 'bg-cyan-600 text-white shadow-md'
+                            : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                        }`}
+                      >
+                        M-Pesa
+                      </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setStreamPayMethod('paystack')}
+                        className={`flex-1 rounded-lg py-2.5 text-sm font-semibold transition ${
+                          streamPayMethod === 'paystack'
+                            ? 'bg-cyan-600 text-white shadow-md'
+                            : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                        }`}
+                      >
+                        Card
+                      </button>
+                    </div>
+                  </div>
+
+                  {streamPayMethod === 'mpesa' ? (
                   <div>
                     <label className={labelCls} htmlFor="sh-mpesa">
                       M-Pesa number
@@ -1296,14 +1704,30 @@ function SupportPageInner() {
                       <p className="mt-1.5 text-sm text-red-400">{streamErrors.mpesaMobile.message}</p>
                     )}
                   </div>
+                  ) : (
+                  <div>
+                    <label className={labelCls} htmlFor="sh-email">
+                      Email
+                    </label>
+                    <input
+                      id="sh-email"
+                      {...registerStream('email')}
+                      type="email"
+                      className={inputCyan}
+                      placeholder="you@email.com"
+                    />
+                    <p className="mt-1.5 text-xs text-gray-500">
+                      Card checkout. Price in USD; billed in KES.
+                    </p>
+                  </div>
+                  )}
 
                   <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/10 px-4 py-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-sm text-cyan-200/80">You pay</span>
                       <span className="text-xl font-bold tabular-nums text-cyan-200">
-                        KES{' '}
-                        {typeof streamAmountKes === 'number' && !Number.isNaN(streamAmountKes)
-                          ? streamAmountKes
+                        {Number.isFinite(shoutoutKes)
+                          ? formatSupportPrice(shoutoutKes, shoutKenya)
                           : '—'}
                       </span>
                     </div>
@@ -1337,10 +1761,10 @@ function SupportPageInner() {
                     disabled={
                       streamSubmitting ||
                       streamPaymentStatus === 'checking' ||
-                      typeof streamAmountKes !== 'number' ||
-                      Number.isNaN(streamAmountKes) ||
-                      streamAmountKes < streamAmountMin ||
-                      streamAmountKes > streamLimits.maxKes
+                      typeof shoutoutKes !== 'number' ||
+                      Number.isNaN(shoutoutKes) ||
+                      shoutoutKes < streamAmountMin ||
+                      shoutoutKes > streamLimits.maxKes
                     }
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-teal-600 py-3.5 text-base font-semibold text-white shadow-lg transition hover:from-cyan-500 hover:to-teal-500 disabled:cursor-not-allowed disabled:opacity-45"
                   >
@@ -1353,19 +1777,19 @@ function SupportPageInner() {
                       <>
                         <Megaphone className="h-5 w-5" />
                         Pay{' '}
-                        {typeof streamAmountKes === 'number' && !Number.isNaN(streamAmountKes)
-                          ? `KES ${streamAmountKes}`
-                          : 'KES …'}{' '}
-                        &amp; show alert
+                        {Number.isFinite(shoutoutKes)
+                          ? formatSupportPrice(shoutoutKes, shoutKenya)
+                          : '…'}{' '}
+                        with {streamPayMethod === 'paystack' ? 'card' : 'M-Pesa'}
                       </>
                     )}
                   </button>
                 </form>
               )}
             </div>
-            )
-          )}
-          </div>
+
+            ))}
+          </section>
           ) : null}
           {rewardItems.length > 0 ? (
             <section
@@ -1375,7 +1799,7 @@ function SupportPageInner() {
               <div className="mb-6 flex flex-col gap-2 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
                 <h2 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">Reward tiers</h2>
                 <p className="max-w-lg text-sm leading-relaxed text-gray-500">
-                  Each tier is a fixed price on M-Pesa. Open one to enter your details and pay.
+                  Fixed-price extras. Kenya: M-Pesa (KES). Other countries: card (USD on screen, KES on the card).
                 </p>
               </div>
               <div
@@ -1396,14 +1820,29 @@ function SupportPageInner() {
                     setTierForm={setTierForm}
                     tierSubmitting={tierSubmitting}
                     tierPaymentStatus={tierPaymentStatus}
+                    country={countryForReward(item.id)}
+                    onCountryChange={(code) => {
+                      setRewardCountries((prev) => ({ ...prev, [item.id]: code }))
+                      writeStoredCheckoutCountry(code, `reward.${item.id}`)
+                      if (!isKenyaCheckout(code)) {
+                        setTierForm((f) =>
+                          f.paymentMethod === 'mpesa' ? { ...f, paymentMethod: 'paystack' } : f,
+                        )
+                      }
+                    }}
+                    kenyaCheckout={isKenyaCheckout(countryForReward(item.id))}
                     tierError={tierError}
                     onExpand={() => {
                       setTierExpandedId(item.id)
                       setTierPaymentStatus('idle')
                       setTierError(null)
                       setTierForm({
-                        displayName: '',
-                        mpesaMobile: '',
+                        displayName: fanPrefill?.handle || '',
+                        mpesaMobile: fanPrefill?.phone || '',
+                        email: fanPrefill?.email || '',
+                        paymentMethod: isKenyaCheckout(countryForReward(item.id))
+                          ? 'mpesa'
+                          : 'paystack',
                         platform: 'tiktok',
                         message: '',
                         videoUrl: '',
@@ -1425,20 +1864,13 @@ function SupportPageInner() {
               </div>
             </section>
           ) : null}
+
           </div>
           </>
           )}
         </main>
 
-        <footer className="relative z-10 border-t border-white/10 bg-black/20">
-          <div className="container mx-auto max-w-7xl px-4 py-8 pb-[max(2rem,env(safe-area-inset-bottom))] flex flex-col items-center gap-4 text-center text-sm text-gray-500">
-            <PlatformBrand href="/" variant="footer" />
-            <p>
-              © {new Date().getFullYear()}{' '}
-              <span className={SITE_NAME_CLASS}>{SITE_NAME}</span>. All rights reserved.
-            </p>
-          </div>
-        </footer>
+        <SiteFooter />
       </div>
     </div>
   )
@@ -1448,7 +1880,7 @@ export default function SupportPage() {
   return (
     <Suspense
       fallback={
-        <div className="relative min-h-screen overflow-x-hidden bg-[#0a0a0f] text-white">
+        <div className="relative min-h-screen text-white">
           <div className="relative z-10">
             <SiteNav />
             <main className="container mx-auto max-w-7xl px-4 pb-16 pt-6">

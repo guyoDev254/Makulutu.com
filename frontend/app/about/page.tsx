@@ -12,19 +12,12 @@ import {
   Video,
 } from 'lucide-react'
 import { SiteNav } from '@/components/SiteNav'
-import { PlatformBrand } from '@/components/PlatformBrand'
-import { SITE_DESCRIPTION, SITE_NAME, SITE_NAME_CLASS, SITE_TAGLINE } from '@/lib/site-brand'
+import { SiteFooter } from '@/components/SiteFooter'
+import { SITE_DESCRIPTION } from '@/lib/site-brand'
 
 export default function About() {
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-[#0a0a0f] text-white">
-      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
-        <div className="absolute -top-32 right-0 h-[24rem] w-[24rem] rounded-full bg-violet-600/20 blur-[100px]" />
-        <div className="absolute top-1/4 -left-24 h-[20rem] w-[20rem] rounded-full bg-fuchsia-600/15 blur-[90px]" />
-        <div className="absolute bottom-0 right-1/4 h-48 w-48 rounded-full bg-cyan-500/10 blur-[70px]" />
-        <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_0%,rgba(10,10,15,0.5)_55%,#0a0a0f_100%)]" />
-      </div>
-
+    <div className="relative min-h-screen text-white">
       <div className="relative z-10">
         <SiteNav />
 
@@ -69,10 +62,11 @@ export default function About() {
                 </div>
                 <ul className="mt-6 space-y-3.5 text-sm text-gray-300 sm:text-base">
                   {[
-                    'Discover creators from the home page',
-                    'M-Pesa checkout where configured',
-                    'Stream alerts via OBS browser sources',
+                    'Discover creators from the home page (or the mobile app)',
+                    'M-Pesa checkout where configured — guest checkout stays on the web',
+                    'Membership, live shoutouts, and optional 1:1 coaching',
                     'Support tiers and booking requests per creator',
+                    'Fans can create a phone account in the mobile app to see memberships',
                   ].map((line) => (
                     <li key={line} className="flex gap-3">
                       <BadgeCheck
@@ -113,7 +107,8 @@ export default function About() {
                   {[
                     'Creator login and profile onboarding',
                     'Workspace: revenue, subscribers, payments, shoutouts',
-                    'Reward tiers and OBS links for your channel only',
+                    'Reward tiers and optional overlays for live streams',
+                    'Mobile app: wallet, payouts, and fans — full admin stays on the web',
                     'Platform admins operate separately from creator accounts',
                   ].map((line) => (
                     <li key={line} className="flex gap-3">
@@ -182,37 +177,13 @@ export default function About() {
                 className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-8 py-3.5 text-base font-semibold text-emerald-100 transition hover:bg-emerald-500/25 sm:w-auto"
               >
                 <CalendarCheck className="h-5 w-5" aria-hidden />
-                Book coaching
+                Book a session
               </Link>
             </div>
           </div>
         </article>
 
-        <footer className="border-t border-white/10 bg-black/30">
-          <div className="container mx-auto max-w-6xl px-4 py-10 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
-            <div className="flex flex-col items-center justify-between gap-6 sm:flex-row">
-              <PlatformBrand href="/" variant="footer" description={SITE_TAGLINE} />
-              <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-gray-400">
-                <Link href="/" className="hover:text-white">
-                  Home
-                </Link>
-                <Link href="/support" className="hover:text-white">
-                  Support
-                </Link>
-                <Link href="/book" className="hover:text-white">
-                  Book
-                </Link>
-                <Link href="/creator/signup" className="hover:text-white">
-                  Create account
-                </Link>
-              </div>
-            </div>
-            <p className="mt-8 text-center text-xs text-gray-600 sm:text-left">
-              © {new Date().getFullYear()}{' '}
-              <span className={SITE_NAME_CLASS}>{SITE_NAME}</span>. All rights reserved.
-            </p>
-          </div>
-        </footer>
+        <SiteFooter />
       </div>
     </div>
   )

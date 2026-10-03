@@ -1,19 +1,53 @@
 'use client'
 
 import Image from 'next/image'
-import type { ReactNode } from 'react'
+import { useState, type InputHTMLAttributes, type ReactNode } from 'react'
+import { Eye, EyeOff, Lock } from 'lucide-react'
 import { SITE_BRAND_ALT } from '@/lib/site-brand'
 
-export const authLabelClass = 'block text-sm font-medium text-gray-300 mb-2'
+export const authLabelClass = 'mb-2 block text-sm font-medium text-zinc-300'
 
 export const authInputClass =
-  'w-full pl-10 pr-4 py-3 bg-gray-700/50 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent'
+  'w-full rounded-xl border border-white/10 bg-white/[0.06] py-3 pl-10 pr-4 text-white placeholder-zinc-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-violet-500'
 
 export const authInputPlainClass =
-  'w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent'
+  'w-full rounded-xl border border-white/10 bg-white/[0.06] px-4 py-3 text-white placeholder-zinc-500 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-violet-500'
 
 export const authSubmitClass =
-  'w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-semibold py-3 px-4 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2'
+  'btn-primary w-full py-3 disabled:cursor-not-allowed disabled:opacity-50'
+
+export function AuthPasswordInput({
+  showLock = true,
+  className,
+  ...props
+}: {
+  showLock?: boolean
+  className?: string
+} & Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'className'>) {
+  const [visible, setVisible] = useState(false)
+  const inputClass =
+    className ||
+    (showLock
+      ? `${authInputClass} pr-12`
+      : 'w-full rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-purple-500')
+
+  return (
+    <div className="relative">
+      {showLock ? (
+        <Lock className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
+      ) : null}
+      <input {...props} type={visible ? 'text' : 'password'} className={inputClass} />
+      <button
+        type="button"
+        className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-gray-400 transition hover:text-white"
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        onClick={() => setVisible((v) => !v)}
+      >
+        {visible ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+      </button>
+    </div>
+  )
+}
 
 export function AuthLoginShell({
   title,
@@ -35,11 +69,11 @@ export function AuthLoginShell({
     logoSize === 'lg' ? 'h-32 w-32 sm:h-36 sm:w-36' : 'h-28 w-28 sm:h-32 sm:w-32'
 
   return (
-    <div className="min-h-dvh bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center px-4 py-10 sm:py-12">
+    <div className="flex min-h-dvh items-center justify-center px-4 py-10 sm:py-12">
       <div className={`w-full ${maxClass} min-w-0`}>
-        <div className="bg-gray-800/50 backdrop-blur-lg rounded-2xl shadow-2xl border border-gray-700/50 p-5 sm:p-8">
-          <div className="text-center mb-6 sm:mb-8">
-            <div className="flex justify-center mb-4 sm:mb-5">
+        <div className="surface-card p-5 shadow-glow backdrop-blur-lg sm:p-8">
+          <div className="mb-6 text-center sm:mb-8">
+            <div className="mb-4 flex justify-center sm:mb-5">
               <span
                 className={`inline-flex ${logoWrap} shrink-0 overflow-hidden rounded-full bg-transparent p-0`}
               >
@@ -53,8 +87,8 @@ export function AuthLoginShell({
                 />
               </span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2">{title}</h1>
-            {subtitle ? <p className="text-gray-400">{subtitle}</p> : null}
+            <h1 className="mb-2 text-2xl font-bold text-white sm:text-3xl">{title}</h1>
+            {subtitle ? <p className="text-zinc-400">{subtitle}</p> : null}
           </div>
           {children}
           {footer ? <div className="mt-6 text-center">{footer}</div> : null}

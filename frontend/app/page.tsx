@@ -1,6 +1,5 @@
 'use client'
 
-import Image from 'next/image'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -17,14 +16,16 @@ import {
   Zap,
 } from 'lucide-react'
 import { HomeCreatorSearch } from '@/components/HomeCreatorSearch'
+import { SiteFooter } from '@/components/SiteFooter'
 import { SiteNav } from '@/components/SiteNav'
 import { API_BASE_URL } from '@/lib/api-origin'
+import { publicImageFitClass, publicImageSrc } from '@/lib/media'
 import { effectiveCreatorSearchQuery, matchesCreatorSearch, type PublicCreator } from '@/lib/creator-search'
 import { SITE_DESCRIPTION, SITE_NAME, SITE_NAME_CLASS, SITE_TAGLINE } from '@/lib/site-brand'
 
 function CreatorCardSkeleton() {
   return (
-    <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] animate-pulse">
+    <div className="surface-card animate-pulse overflow-hidden">
       <div className="h-56 bg-white/10" />
       <div className="space-y-3 p-5">
         <div className="h-3 w-20 rounded bg-white/10" />
@@ -32,20 +33,6 @@ function CreatorCardSkeleton() {
         <div className="h-4 w-1/2 rounded bg-white/10" />
         <div className="h-12 w-full rounded bg-white/5" />
       </div>
-      <style jsx>{`
-        .flag-marquee-track {
-          animation: marqueeFlags 28s linear infinite;
-        }
-
-        @keyframes marqueeFlags {
-          0% {
-            transform: translateX(0);
-          }
-          100% {
-            transform: translateX(-50%);
-          }
-        }
-      `}</style>
     </div>
   )
 }
@@ -53,6 +40,7 @@ function CreatorCardSkeleton() {
 export default function PlatformHomePage() {
   const [creators, setCreators] = useState<PublicCreator[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [creatorSearch, setCreatorSearch] = useState('')
 
   useEffect(() => {
@@ -60,10 +48,14 @@ export default function PlatformHomePage() {
     ;(async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/creator-auth/public`)
+        if (!res.ok) {
+          throw new Error('Could not load streamers')
+        }
         const rows = (await res.json().catch(() => [])) as PublicCreator[]
         if (!cancelled && Array.isArray(rows)) setCreators(rows)
+        if (!cancelled) setLoadError(null)
       } catch {
-        /* keep empty */
+        if (!cancelled) setLoadError('Could not reach the API. Check NEXT_PUBLIC_API_URL and that the backend is running.')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -104,12 +96,12 @@ export default function PlatformHomePage() {
       bg: 'bg-emerald-500/10',
     },
     {
-      icon: Radio,
-      title: 'OBS & live alerts',
-      body: 'Browser sources, test alerts, and optional unique stream links so overlays stay under each creator’s control.',
-      accent: 'text-fuchsia-300',
-      ring: 'ring-fuchsia-500/20',
-      bg: 'bg-fuchsia-500/10',
+      icon: Users,
+      title: 'Public creator pages',
+      body: 'Every creator gets a shareable URL for support, membership, and booking—consistent branding across the network.',
+      accent: 'text-violet-300',
+      ring: 'ring-violet-500/20',
+      bg: 'bg-violet-500/10',
     },
     {
       icon: Gift,
@@ -128,20 +120,20 @@ export default function PlatformHomePage() {
       bg: 'bg-cyan-500/10',
     },
     {
-      icon: Users,
-      title: 'Public profiles',
-      body: 'Every creator gets a shareable URL for support, membership, and booking flows—consistent branding across the network.',
-      accent: 'text-violet-300',
-      ring: 'ring-violet-500/20',
-      bg: 'bg-violet-500/10',
-    },
-    {
       icon: Zap,
       title: 'Fast onboarding',
-      body: 'Sign up, finish your profile, and open the workspace to manage tiers, OBS links, and payouts logic in one place.',
+      body: 'Sign up, finish your profile, and open the workspace to manage tiers, OBS links, and M-Pesa payouts in one place.',
       accent: 'text-yellow-300',
       ring: 'ring-yellow-500/20',
       bg: 'bg-yellow-500/10',
+    },
+    {
+      icon: Radio,
+      title: 'OBS & live alerts',
+      body: 'Optional browser overlays for live streams. Useful on stream — not required to run a creator page.',
+      accent: 'text-fuchsia-300',
+      ring: 'ring-fuchsia-500/20',
+      bg: 'bg-fuchsia-500/10',
     },
   ] as const
 
@@ -159,22 +151,12 @@ export default function PlatformHomePage() {
     {
       n: '3',
       title: 'Pay on your phone',
-      body: 'Complete M-Pesa on the device you trust. You’ll get confirmation and any follow-up details from the creator’s flow.',
+      body: 'Complete M-Pesa on the device you trust. You’ll get confirmation and any follow-up details from the creator.',
     },
   ] as const
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-[#0a0a0f] text-white">
-      <div className="pointer-events-none fixed inset-0" aria-hidden>
-        <div className="absolute -top-24 -left-20 h-96 w-96 rounded-full bg-violet-600/18 blur-[100px]" />
-        <div className="absolute top-1/4 -right-24 h-80 w-80 rounded-full bg-fuchsia-600/14 blur-[90px]" />
-        <div className="absolute bottom-1/4 left-1/3 h-64 w-64 rounded-full bg-cyan-600/10 blur-[80px]" />
-        <div
-          className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_0%,rgba(10,10,15,0.4)_50%,#0a0a0f_100%)]"
-          aria-hidden
-        />
-      </div>
-
+    <div className="relative min-h-screen text-white">
       <div className="relative z-10">
         <SiteNav
           showSupport={false}
@@ -207,26 +189,18 @@ export default function PlatformHomePage() {
               {SITE_DESCRIPTION}
             </p>
             <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-              <a
-                href="#creators"
-                className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-900/30 transition hover:from-violet-500 hover:to-fuchsia-500"
-              >
-                Browse creators
+              <a href="#creators" className="btn-primary min-h-[48px] px-6 py-3">
+                Browse streamers
                 <ChevronDown className="h-4 w-4 opacity-90" aria-hidden />
               </a>
-              <Link
-                href="/creator/login"
-                className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/5 px-6 py-3 text-sm font-semibold text-white hover:bg-white/10"
-              >
-                Creator login
-              </Link>
-              <Link
-                href="/creator/signup"
-                className="inline-flex min-h-[48px] items-center justify-center rounded-xl border border-violet-500/40 bg-violet-500/10 px-6 py-3 text-sm font-semibold text-violet-100 hover:bg-violet-500/20"
-              >
-                Get started
+              <Link href="/creator/login" className="btn-secondary min-h-[48px] px-6 py-3">
+                Streamer login
               </Link>
             </div>
+            <p className="mx-auto mt-5 max-w-xl text-center text-sm text-gray-500">
+              Fans can sign in on the web or in the app — same database. Guest M-Pesa checkout still
+              works without an account.
+            </p>
           </header>
 
           {/* Africa platform banner */}
@@ -239,7 +213,7 @@ export default function PlatformHomePage() {
                 Built for creators and supporters across the continent
               </h2>
               <p className="mt-3 max-w-3xl text-sm leading-relaxed text-gray-300 sm:text-base">
-                One unified creator platform for Africa: discover creators, support them with trusted checkout,
+                One unified creator platform for Africa: discover streamers, support them with trusted checkout,
                 and grow communities from one place.
               </p>
 
@@ -271,8 +245,7 @@ export default function PlatformHomePage() {
                 Everything fans and creators expect
               </h2>
               <p className="mt-3 text-gray-400">
-                One stack for discovery, checkout, and stream-side tools—without mixing one creator’s data with
-                another’s.
+                One stack for discovery, checkout, and stream-side tools — without mixing one creator’s data with another’s.
               </p>
             </div>
             <ul className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -297,7 +270,7 @@ export default function PlatformHomePage() {
               <h2 id="how-heading" className="text-2xl font-bold tracking-tight sm:text-3xl">
                 How supporting works
               </h2>
-              <p className="mt-3 text-gray-400">Three steps from landing on the site to a completed checkout.</p>
+              <p className="mt-3 text-gray-400">Three steps from landing on a creator page to a completed checkout.</p>
             </div>
             <ol className="mx-auto mt-10 grid max-w-5xl gap-6 md:grid-cols-3">
               {steps.map((s) => (
@@ -360,6 +333,11 @@ export default function PlatformHomePage() {
                 <CreatorCardSkeleton />
                 <CreatorCardSkeleton />
               </div>
+            ) : loadError ? (
+              <div className="mx-auto mt-10 max-w-xl rounded-2xl border border-red-500/30 bg-red-500/10 px-8 py-14 text-center">
+                <p className="text-lg font-semibold text-white">Could not load streamers</p>
+                <p className="mt-2 text-sm leading-relaxed text-gray-400">{loadError}</p>
+              </div>
             ) : creators.length === 0 ? (
               <div className="mx-auto mt-10 max-w-xl rounded-2xl border border-dashed border-white/20 bg-white/[0.02] px-8 py-14 text-center">
                 <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-500/15 ring-1 ring-violet-500/30">
@@ -400,22 +378,36 @@ export default function PlatformHomePage() {
                 {creatorCards.map((creator) => (
                   <li key={creator.slug}>
                     <article className="group overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] shadow-lg shadow-black/20 transition hover:border-violet-400/35 hover:bg-white/[0.05]">
-                      <div className="relative h-56 overflow-hidden">
-                        <Image
-                          src={creator.avatarUrl || '/logo.png'}
+                      <div className="relative aspect-square overflow-hidden bg-black">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={publicImageSrc(creator.avatarUrl)}
                           alt={creator.displayName}
-                          fill
-                          className="object-cover transition duration-500 group-hover:scale-[1.03]"
-                          sizes="(max-width: 1024px) 100vw, 33vw"
+                          referrerPolicy="no-referrer"
+                          className={`h-full w-full ${publicImageFitClass(creator.avatarUrl)}`}
                         />
                         <div
                           className="absolute inset-0 bg-gradient-to-t from-[#0a0a0f] via-transparent to-transparent opacity-90"
                           aria-hidden
                         />
                         <div className="absolute bottom-3 left-4 right-4">
-                          <span className="inline-flex rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/90 backdrop-blur-sm">
-                            Creator
-                          </span>
+                          {creator.nextLive ? (
+                            <span
+                              className={`mb-2 inline-flex rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider backdrop-blur-sm ${
+                                creator.nextLive.status === 'live'
+                                  ? 'bg-red-500/80 text-white'
+                                  : 'bg-violet-500/80 text-white'
+                              }`}
+                            >
+                              {creator.nextLive.status === 'live'
+                                ? 'Live now'
+                                : `${creator.nextLive.platformLabel} · ${new Date(creator.nextLive.startsAt).toLocaleString('en-KE', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`}
+                            </span>
+                          ) : (
+                            <span className="inline-flex rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/90 backdrop-blur-sm">
+                              Creator
+                            </span>
+                          )}
                           <h3 className="mt-1 text-xl font-bold text-white drop-shadow-md">
                             {creator.displayName}
                           </h3>
@@ -448,7 +440,7 @@ export default function PlatformHomePage() {
             <ul className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-center sm:gap-x-10 sm:gap-y-3">
               <li className="flex items-center gap-2 text-sm text-gray-400">
                 <BadgeCheck className="h-5 w-5 shrink-0 text-emerald-400/90" aria-hidden />
-                Per-creator payouts and reporting
+                Payouts go to M-Pesa via Paystack
               </li>
               <li className="flex items-center gap-2 text-sm text-gray-400">
                 <BadgeCheck className="h-5 w-5 shrink-0 text-emerald-400/90" aria-hidden />
@@ -461,32 +453,8 @@ export default function PlatformHomePage() {
             </ul>
           </section>
 
-          <footer className="mt-16 border-t border-white/10 pt-10">
-            <div className="flex flex-col items-center justify-between gap-6 text-center sm:flex-row sm:text-left">
-              <p className="text-sm text-gray-500">
-                © {new Date().getFullYear()}{' '}
-                <span className={SITE_NAME_CLASS}>{SITE_NAME}</span>. {SITE_TAGLINE}.
-              </p>
-              <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-gray-400">
-                <Link href="/about" className="hover:text-white">
-                  About
-                </Link>
-                <Link href="/terms" className="hover:text-white">
-                  Terms
-                </Link>
-                <Link href="/support" className="hover:text-white">
-                  Support
-                </Link>
-                <Link href="/book" className="hover:text-white">
-                  Book
-                </Link>
-                <Link href="/creator/login" className="hover:text-white">
-                  Creator login
-                </Link>
-              </nav>
-            </div>
-          </footer>
         </main>
+        <SiteFooter />
       </div>
     </div>
   )

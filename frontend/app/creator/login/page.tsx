@@ -3,10 +3,11 @@
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { FormEvent, Suspense, useEffect, useState } from 'react'
-import { Lock, User, Loader2, AlertCircle } from 'lucide-react'
+import { User, Loader2, AlertCircle } from 'lucide-react'
 import { creatorAuthApi, setCreatorSession } from '@/lib/creator-auth'
 import {
   AuthLoginShell,
+  AuthPasswordInput,
   authInputClass,
   authLabelClass,
   authSubmitClass,
@@ -23,10 +24,14 @@ function CreatorLoginPageInner() {
 
   useEffect(() => {
     if (searchParams.get('verifyEmail') === '1') {
-      const email = searchParams.get('email') || 'your email'
-      setInfo(`Account created. A verification link was sent to ${email}.`)
+      const email = searchParams.get('email') || ''
+      if (email) {
+        router.replace(`/creator/verify-email?email=${encodeURIComponent(email)}`)
+        return
+      }
+      setInfo('Account created. Enter the 6-digit code from your email.')
     }
-  }, [searchParams])
+  }, [searchParams, router])
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -46,12 +51,9 @@ function CreatorLoginPageInner() {
       const msg = err instanceof Error ? err.message : 'Could not sign in'
       setError(msg)
       if (/verify your email/i.test(msg) && identifier.includes('@')) {
-        try {
-          const res = await creatorAuthApi.resendVerification(identifier.trim())
-          setInfo(res.message)
-        } catch {
-          /* keep primary error */
-        }
+        router.push(
+          `/creator/verify-email?email=${encodeURIComponent(identifier.trim().toLowerCase())}`,
+        )
       }
     } finally {
       setLoading(false)
@@ -60,12 +62,12 @@ function CreatorLoginPageInner() {
 
   return (
     <AuthLoginShell
-      title="Creator sign in"
-      subtitle="Sign in with your creator email or public page slug. Revenue, tiers, and OBS tools live in your workspace after onboarding."
+      title="Streamer sign in"
+      subtitle="Sign in with your streamer email or public page slug. Revenue, tiers, and OBS tools live in your workspace after onboarding."
       footer={
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-zinc-400">
           No account yet?{' '}
-          <Link href="/creator/signup" className="text-purple-300 hover:text-purple-200 font-medium">
+          <Link href="/creator/signup" className="font-medium text-violet-300 hover:text-violet-200">
             Create one
           </Link>
         </p>
@@ -117,19 +119,14 @@ function CreatorLoginPageInner() {
               Forgot password?
             </Link>
           </div>
-          <div className="relative">
-            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              id="creator-password"
-              required
-              type="password"
-              autoComplete="current-password"
-              placeholder="Enter your password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className={authInputClass}
-            />
-          </div>
+          <AuthPasswordInput
+            id="creator-password"
+            required
+            autoComplete="current-password"
+            placeholder="Enter your password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
         </div>
 
         <button type="submit" disabled={loading} className={authSubmitClass}>
@@ -149,7 +146,7 @@ function CreatorLoginPageInner() {
 
 function CreatorLoginPageFallback() {
   return (
-    <AuthLoginShell title="Creator sign in" subtitle="Loading…">
+    <AuthLoginShell title="Streamer sign in" subtitle="Loading…">
       <div className="flex justify-center py-8 text-sm text-gray-400">Loading…</div>
     </AuthLoginShell>
   )

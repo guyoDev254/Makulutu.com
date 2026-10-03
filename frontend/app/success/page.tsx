@@ -12,6 +12,7 @@ function SuccessContent() {
   const searchParams = useSearchParams()
   const paymentId = searchParams.get('paymentId')
   const [subscription, setSubscription] = useState<any>(null)
+  const [payment, setPayment] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -33,18 +34,48 @@ function SuccessContent() {
         if (paypalReturn === '1' && paypalOrderId) {
           await api.post('/payments/paypal/capture', { orderId: paypalOrderId })
         }
+        const paystackReturn = searchParams.get('paystack')
+        const paystackRef =
+          searchParams.get('trxref') || searchParams.get('reference') || pid
+        if (paystackReturn === '1' && paystackRef) {
+          const verified = await api.post('/payments/paystack/verify', {
+            reference: paystackRef,
+          })
+          console.info('[Paystack test] verify', {
+            reference: paystackRef,
+            paymentId: pid,
+            status: verified.data?.status,
+            amountKes: verified.data?.amountKes ?? verified.data?.amount,
+            purpose: verified.data?.purpose,
+          })
+        }
         await api.get(`/payments/${pid}/status`)
         const paymentRes = await api.get(`/payments/${pid}`)
-        const payment = paymentRes.data
-        if (!cancelled && payment.user?.id) {
-          const subRes = await api.get(`/subscriptions/user/${payment.user.id}/active`)
-          setSubscription(subRes.data)
+        const pay = paymentRes.data
+        console.info('[Paystack test] payment loaded', {
+          id: pay?.id,
+          status: pay?.status,
+          amountKes: pay?.amountKes ?? pay?.amount,
+        })
+        if (cancelled) return
+        setPayment(pay)
+        const purpose = String(pay?.purpose || 'SUBSCRIPTION').toUpperCase()
+        const isMembership = purpose === 'SUBSCRIPTION' || purpose === 'NULL' || !pay?.purpose
+        if (isMembership && pay?.membership) {
+          setSubscription(pay.membership)
         }
         if (!cancelled) {
+          const thanks =
+            (typeof pay?.thankYouMessage === 'string' && pay.thankYouMessage.trim()) ||
+            (typeof pay?.creator?.thankYouMessage === 'string' &&
+              pay.creator.thankYouMessage.trim()) ||
+            (typeof pay?.creator?.fanThankYouMessage === 'string' &&
+              pay.creator.fanThankYouMessage.trim()) ||
+            ''
           await Swal.fire({
             icon: 'success',
             title: 'Payment completed',
-            text: 'Your subscription is now active.',
+            text: thanks || (isMembership ? 'Your membership is now active.' : 'Thank you for supporting this creator.'),
             confirmButtonColor: '#10b981',
             confirmButtonText: 'Great!',
             timer: 3000,
@@ -52,7 +83,16 @@ function SuccessContent() {
           })
         }
       } catch (error) {
-        console.error('Error completing payment or fetching subscription:', error)
+        console.error('[Paystack test] confirm failed', {
+          paymentId: pid,
+          paystack: searchParams.get('paystack'),
+          trxref: searchParams.get('trxref'),
+          reference: searchParams.get('reference'),
+          message: (error as { response?: { data?: { message?: string } } })
+            ?.response?.data?.message,
+          status: (error as { response?: { status?: number } })?.response?.status,
+          data: (error as { response?: { data?: unknown } })?.response?.data,
+        })
         const msg =
           (error as { response?: { data?: { message?: string } } })?.response?.data
             ?.message || 'Something went wrong loading your subscription.'
@@ -77,7 +117,7 @@ function SuccessContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-canvas">
         <div className="text-white">Loading...</div>
       </div>
     )
@@ -85,7 +125,7 @@ function SuccessContent() {
 
   if (loadError && paymentId) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
+      <div className="min-h-screen bg-canvas">
         <SiteNav />
         <div className="container mx-auto max-w-7xl px-4 py-10 sm:py-14 md:py-16 pb-[max(2rem,env(safe-area-inset-bottom))]">
           <div className="max-w-2xl mx-auto w-full min-w-0 text-center">
@@ -94,13 +134,13 @@ function SuccessContent() {
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
               <Link
                 href="/support"
-                className="min-h-[44px] flex items-center justify-center bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition"
+                className="btn-primary min-h-[44px] px-6 py-3"
               >
-                Back to support
+                Back to join
               </Link>
               <Link
                 href="/"
-                className="min-h-[44px] flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition"
+                className="btn-secondary min-h-[44px] px-6 py-3"
               >
                 Home
               </Link>
@@ -112,7 +152,7 @@ function SuccessContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
+    <div className="min-h-screen bg-canvas">
       <SiteNav />
       <div className="container mx-auto max-w-7xl px-4 py-10 sm:py-14 md:py-16 pb-[max(2rem,env(safe-area-inset-bottom))]">
         <div className="max-w-2xl mx-auto w-full min-w-0">
@@ -129,15 +169,26 @@ function SuccessContent() {
               Payment completed
             </h1>
             <p className="text-base sm:text-lg md:text-xl text-gray-300 px-1">
-              Your subscription is active. Check WhatsApp for the group link if it has not arrived yet.
+              {payment?.thankYouMessage ||
+                payment?.creator?.thankYouMessage ||
+                payment?.creator?.fanThankYouMessage ||
+                (subscription
+                  ? 'Your membership is active. Check WhatsApp for the group link if it has not arrived yet.'
+                  : 'Thank you for supporting this creator.')}
             </p>
+            {payment?.amountKes != null || payment?.amount != null ? (
+              <p className="mt-3 text-sm text-emerald-300">
+                KES {Number(payment.amountKes ?? payment.amount).toLocaleString()}
+                {payment?.creator?.displayName ? ` · ${payment.creator.displayName}` : ''}
+              </p>
+            ) : null}
           </div>
 
           {/* Subscription Details */}
           {subscription && (
-            <div className="bg-gray-800 rounded-lg p-5 sm:p-8 mb-6 sm:mb-8">
+            <div className="surface-card mb-6 p-5 sm:mb-8 sm:p-8">
               <h2 className="text-xl sm:text-2xl font-bold text-white mb-4 sm:mb-6">
-                Subscription Details
+                Membership details
               </h2>
               
               <div className="space-y-4">
@@ -199,13 +250,13 @@ function SuccessContent() {
           <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
             <Link
               href="/"
-              className="flex-1 min-h-[44px] flex items-center justify-center bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-6 rounded-lg text-center transition"
+              className="btn-primary flex-1 min-h-[44px] px-6 py-3"
             >
               Back to Home
             </Link>
             <Link
               href="/support"
-              className="flex-1 min-h-[44px] flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg text-center transition"
+              className="btn-secondary flex-1 min-h-[44px] px-6 py-3"
             >
               More options
             </Link>
@@ -218,7 +269,7 @@ function SuccessContent() {
 
 function SuccessPageFallback() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center">
+    <div className="flex min-h-screen items-center justify-center bg-canvas">
       <div className="text-white">Loading...</div>
     </div>
   )

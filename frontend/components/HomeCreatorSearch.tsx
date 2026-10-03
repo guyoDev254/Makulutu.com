@@ -1,6 +1,5 @@
 'use client'
 
-import Image from 'next/image'
 import Link from 'next/link'
 import { Search } from 'lucide-react'
 import { createPortal } from 'react-dom'
@@ -11,6 +10,7 @@ import {
   matchesCreatorSearch,
   type PublicCreator,
 } from '@/lib/creator-search'
+import { publicImageFitClass, publicImageSrc } from '@/lib/media'
 
 const SUGGESTION_LIMIT = 8
 
@@ -135,13 +135,12 @@ export function HomeCreatorSearch({ creators, query, onQueryChange }: HomeCreato
                 onClick={() => setOpen(false)}
               >
                 <span className="relative h-11 w-11 shrink-0 overflow-hidden rounded-full bg-white/10 ring-1 ring-white/10">
-                      <Image
-                        src={c.avatarUrl || '/logo.png'}
-                        alt=""
-                        width={44}
-                        height={44}
-                        className="h-full w-full object-cover"
-                      />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={publicImageSrc(c.avatarUrl)}
+                    alt=""
+                    className={`h-full w-full ${publicImageFitClass(c.avatarUrl)}`}
+                  />
                 </span>
                 <span className="min-w-0 flex-1 text-left">
                   <span className="block truncate font-medium text-white">{c.displayName}</span>

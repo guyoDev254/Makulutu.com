@@ -5,6 +5,9 @@ import { Gift, Loader2, Phone } from 'lucide-react'
 import type { StreamAlertLimits, StreamAlertPlatform } from '@/lib/api'
 import type { SupportCatalogRewardItem } from '@/lib/api'
 import { darkenHex, mixHexWithWhite, normalizeRewardAccentHex, rgbaHex } from '@/lib/reward-tier-accent'
+import { formatSupportPrice } from '@/lib/fx'
+import { CheckoutCountryField } from '@/components/support/CheckoutCountryField'
+import type { SupportCountryCode } from '@/lib/support-countries'
 
 const PLATFORM_OPTIONS: { value: StreamAlertPlatform; label: string }[] = [
   { value: 'tiktok', label: 'TikTok' },
@@ -24,6 +27,9 @@ export function RewardTierCatalogCard({
   setTierForm,
   tierSubmitting,
   tierPaymentStatus,
+  kenyaCheckout = true,
+  country = 'KE',
+  onCountryChange,
   tierError,
   onExpand,
   onCancel,
@@ -39,6 +45,8 @@ export function RewardTierCatalogCard({
   tierForm: {
     displayName: string
     mpesaMobile: string
+    email: string
+    paymentMethod: 'mpesa' | 'paystack'
     platform: StreamAlertPlatform
     message: string
     videoUrl: string
@@ -47,6 +55,8 @@ export function RewardTierCatalogCard({
     React.SetStateAction<{
       displayName: string
       mpesaMobile: string
+      email: string
+      paymentMethod: 'mpesa' | 'paystack'
       platform: StreamAlertPlatform
       message: string
       videoUrl: string
@@ -54,6 +64,9 @@ export function RewardTierCatalogCard({
   >
   tierSubmitting: boolean
   tierPaymentStatus: 'idle' | 'pending' | 'checking' | 'success' | 'failed'
+  kenyaCheckout?: boolean
+  country?: SupportCountryCode
+  onCountryChange?: (code: SupportCountryCode) => void
   tierError: string | null
   onExpand: () => void
   onCancel: () => void
@@ -120,9 +133,20 @@ export function RewardTierCatalogCard({
           className={`font-bold tabular-nums ${compact ? 'text-lg' : 'text-xl'} ${accent ? '' : 'text-amber-200'}`}
           style={priceStyle}
         >
-          KES {tier.amountKes}
+          {formatSupportPrice(tier.amountKes, kenyaCheckout)}
         </span>
       </div>
+      {onCountryChange ? (
+        <div className={compact ? 'mb-3' : 'mb-4'}>
+          <CheckoutCountryField
+            id={`tier-country-${tier.id}`}
+            value={country}
+            onChange={onCountryChange}
+            compactHint
+            selectClassName={tierSelectClass}
+          />
+        </div>
+      ) : null}
       {tier.description ? (
         <p
           className={`text-sm leading-relaxed text-gray-400 ${compact ? 'line-clamp-3' : ''}`}
@@ -212,6 +236,43 @@ export function RewardTierCatalogCard({
           </div>
 
           <div>
+            <span
+              className={labelCls}
+              id={`tier-pay-${tier.id}`}
+              style={accent ? { color: mixHexWithWhite(accent, 0.55) } : undefined}
+            >
+              Payment method
+            </span>
+            <div className="mt-2 flex gap-2 rounded-xl border border-white/10 bg-black/20 p-1">
+              {kenyaCheckout ? (
+              <button
+                type="button"
+                onClick={() => setTierForm((f) => ({ ...f, paymentMethod: 'mpesa' }))}
+                className={`flex-1 rounded-lg py-2 text-sm font-semibold transition ${
+                  tierForm.paymentMethod === 'mpesa'
+                    ? 'bg-amber-600 text-white'
+                    : 'text-gray-400 hover:bg-white/5'
+                }`}
+              >
+                M-Pesa
+              </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setTierForm((f) => ({ ...f, paymentMethod: 'paystack' }))}
+                className={`flex-1 rounded-lg py-2 text-sm font-semibold transition ${
+                  tierForm.paymentMethod === 'paystack'
+                    ? 'bg-amber-600 text-white'
+                    : 'text-gray-400 hover:bg-white/5'
+                }`}
+              >
+                Card
+              </button>
+            </div>
+          </div>
+
+          {tierForm.paymentMethod === 'mpesa' ? (
+          <div>
             <label
               className={labelCls}
               htmlFor={`tier-mpesa-${tier.id}`}
@@ -229,6 +290,25 @@ export function RewardTierCatalogCard({
               placeholder="2547XXXXXXXX or 07XXXXXXXX"
             />
           </div>
+          ) : (
+          <div>
+            <label
+              className={labelCls}
+              htmlFor={`tier-email-${tier.id}`}
+              style={accent ? { color: mixHexWithWhite(accent, 0.55) } : undefined}
+            >
+              Email
+            </label>
+            <input
+              id={`tier-email-${tier.id}`}
+              type="email"
+              value={tierForm.email}
+              onChange={(e) => setTierForm((f) => ({ ...f, email: e.target.value }))}
+              className={tierFieldClass}
+              placeholder="you@email.com"
+            />
+          </div>
+          )}
 
           {tier.allowSupporterMessage ? (
             <div>
@@ -250,7 +330,7 @@ export function RewardTierCatalogCard({
                 rows={3}
                 maxLength={tier.maxMessageLength}
                 className={`${tierFieldClass} min-h-[4.5rem] resize-y`}
-                placeholder="Short line for the overlay"
+                placeholder="What should the coach say?"
               />
             </div>
           ) : null}
@@ -259,7 +339,7 @@ export function RewardTierCatalogCard({
             <div>
               <label className={labelCls} htmlFor={`tier-clip-${tier.id}`}>
                 <span style={accent ? { color: mixHexWithWhite(accent, 0.55) } : undefined}>
-                  TikTok clip URL{' '}
+                  Clip URL{' '}
                 </span>
                 <span
                   className="font-normal text-gray-500"
@@ -282,7 +362,7 @@ export function RewardTierCatalogCard({
                   className={`mt-1.5 text-xs ${accent ? '' : 'text-amber-200/80'}`}
                   style={accent ? { color: rgbaHex(accent, 0.82) } : undefined}
                 >
-                  This tier is below the minimum for clips (KES {streamLimits.minKesWithVideo}). Leave the URL empty
+                  This tier is below the minimum for clips ({formatSupportPrice(streamLimits.minKesWithVideo, kenyaCheckout)}). Leave the URL empty
                   or pick another tier.
                 </p>
               ) : null}
@@ -381,7 +461,8 @@ export function RewardTierCatalogCard({
               ) : (
                 <>
                   <Gift className="h-5 w-5" />
-                  Pay KES {tier.amountKes}
+                  Pay {formatSupportPrice(tier.amountKes, kenyaCheckout)}
+                  {tierForm.paymentMethod === 'paystack' ? ' with card' : ''}
                 </>
               )}
             </button>

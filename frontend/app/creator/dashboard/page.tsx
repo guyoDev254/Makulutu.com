@@ -47,7 +47,7 @@ export default function CreatorOnboardingPage() {
 
   if (gate === 'loading' || gate === 'redirect') {
     return (
-      <main className="min-h-screen bg-[#0a0a0f] text-white flex items-center justify-center p-8">
+      <main className="flex min-h-screen items-center justify-center bg-canvas p-8 text-white">
         <p className="text-sm text-gray-400">Loading…</p>
       </main>
     )

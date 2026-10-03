@@ -11,6 +11,7 @@ import {
   setCreatorUserProfile,
   type CreatorProfile,
 } from '@/lib/creator-auth'
+import { publicImageSrc } from '@/lib/media'
 
 type Mode = 'onboarding' | 'settings'
 
@@ -19,6 +20,8 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [photoBusy, setPhotoBusy] = useState(false)
+  const [localPreview, setLocalPreview] = useState<string | null>(null)
   const [profile, setProfile] = useState<CreatorProfile | null>(null)
   const [form, setForm] = useState({
     displayName: '',
@@ -31,6 +34,7 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
     tiktokUrl: '',
     instagramUrl: '',
     youtubeUrl: '',
+    fanThankYouMessage: '',
   })
 
   useEffect(() => {
@@ -56,6 +60,7 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
           tiktokUrl: me.tiktokUrl || '',
           instagramUrl: me.instagramUrl || '',
           youtubeUrl: me.youtubeUrl || '',
+          fanThankYouMessage: me.fanThankYouMessage || me.thankYouMessage || '',
         })
       } catch {
         if (!cancelled) {
@@ -71,6 +76,12 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
     }
   }, [router])
 
+  useEffect(() => {
+    return () => {
+      if (localPreview?.startsWith('blob:')) URL.revokeObjectURL(localPreview)
+    }
+  }, [localPreview])
+
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setSaving(true)
@@ -83,10 +94,10 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
         whatIDo: form.whatIDo.trim() || null,
         packagesSummary: form.packagesSummary.trim() || null,
         primaryCategory: form.primaryCategory.trim() || null,
-        avatarUrl: form.avatarUrl.trim() || null,
         tiktokUrl: form.tiktokUrl.trim() || null,
         instagramUrl: form.instagramUrl.trim() || null,
         youtubeUrl: form.youtubeUrl.trim() || null,
+        fanThankYouMessage: form.fanThankYouMessage.trim() || null,
         onboardingComplete: true,
       })
       setCreatorUserProfile(next)
@@ -102,14 +113,17 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
         tiktokUrl: next.tiktokUrl || '',
         instagramUrl: next.instagramUrl || '',
         youtubeUrl: next.youtubeUrl || '',
+        fanThankYouMessage: next.fanThankYouMessage || next.thankYouMessage || '',
       })
 
       if (mode === 'onboarding') {
         await Swal.fire({
           icon: 'success',
-          title: 'Profile ready',
-          text: 'Opening your creator workspace.',
-          timer: 1600,
+          title: next.streamVerifiedAt ? 'Profile ready' : 'Links sent for review',
+          text: next.streamVerifiedAt
+            ? 'Opening your creator workspace.'
+            : 'We emailed you. An admin will review your TikTok or YouTube channel before you can generate OBS links.',
+          timer: next.streamVerifiedAt ? 1600 : 2800,
           showConfirmButton: false,
         })
         router.replace('/creator/workspace')
@@ -118,8 +132,11 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
 
       await Swal.fire({
         icon: 'success',
-        title: 'Profile saved',
-        timer: 1800,
+        title: next.streamVerifiedAt ? 'Profile saved' : 'Links sent for review',
+        text: next.streamVerifiedAt
+          ? undefined
+          : 'We emailed you. OBS overlays stay locked until an admin verifies your channel.',
+        timer: 2200,
         showConfirmButton: false,
       })
     } catch (err: unknown) {
@@ -137,7 +154,7 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
   }
 
   if (loading) {
-    return <main className="min-h-screen bg-[#0a0a0f] text-white p-8">Loading...</main>
+    return <main className="min-h-screen bg-canvas p-8 text-white">Loading...</main>
   }
 
   const isOnboarding = mode === 'onboarding'
@@ -147,7 +164,7 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
   const whatIDoPreview = (form.whatIDo || profile?.whatIDo || '').trim()
   const packagesPreview = (form.packagesSummary || profile?.packagesSummary || '').trim()
   const categoryPreview = (form.primaryCategory || profile?.primaryCategory || '').trim()
-  const avatarPreview = (form.avatarUrl || profile?.avatarUrl || '').trim()
+  const avatarPreview = (localPreview || form.avatarUrl || profile?.avatarUrl || '').trim()
   const completionItems = [
     form.displayName.trim().length >= 2,
     slugPreview.length >= 3,
@@ -155,16 +172,14 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
     form.whatIDo.trim().length >= 40,
     form.packagesSummary.trim().length >= 40,
     form.primaryCategory.trim().length >= 2,
-    form.tiktokUrl.trim().length > 0 ||
-      form.instagramUrl.trim().length > 0 ||
-      form.youtubeUrl.trim().length > 0,
+    form.tiktokUrl.trim().length > 0 || form.youtubeUrl.trim().length > 0,
   ]
   const completionPct = Math.round(
     (completionItems.filter(Boolean).length / completionItems.length) * 100,
   )
 
   return (
-    <main className="min-h-screen bg-[#0a0a0f] text-white p-4 sm:p-8">
+    <main className="min-h-screen bg-canvas p-4 text-white sm:p-8">
       <div className="mx-auto max-w-5xl space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -180,12 +195,20 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
                 : 'Update how fans see you on your public URL. Analytics stay in the workspace.'}
             </p>
             {!isOnboarding ? (
-              <Link
-                href="/creator/workspace"
-                className="mt-3 inline-flex rounded-lg border border-white/20 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/5 transition"
-              >
-                ← Back to workspace
-              </Link>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link
+                  href="/creator/workspace"
+                  className="inline-flex rounded-lg border border-white/20 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/5 transition"
+                >
+                  ← Back to workspace
+                </Link>
+                <Link
+                  href="/creator/lives"
+                  className="inline-flex rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-500 transition"
+                >
+                  Schedule a live
+                </Link>
+              </div>
             ) : null}
           </div>
           <button
@@ -211,6 +234,24 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
               </Link>
             </p>
             <p className="mt-1 text-xs text-gray-500">Account email: {profile.email}</p>
+            {profile.streamVerifiedAt ? (
+              <p className="mt-1 text-xs text-emerald-400">
+                Streaming channels verified — you can generate OBS links.
+              </p>
+            ) : profile.streamReviewNote ? (
+              <p className="mt-1 text-xs text-red-300">
+                Stream links were rejected. {profile.streamReviewNote} Update TikTok or YouTube and save
+                again for another review.
+              </p>
+            ) : profile.streamLinksSubmittedAt ? (
+              <p className="mt-1 text-xs text-amber-300">
+                TikTok/YouTube submitted. We email you when an admin verifies your stream.
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-amber-300">
+                Add TikTok or YouTube. Admin review is required before OBS overlays.
+              </p>
+            )}
           </div>
         ) : null}
 
@@ -272,20 +313,84 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
             <div>
               <label className="mb-1 block text-sm text-gray-300">Primary category</label>
               <input
-                placeholder="eFootball coach, streamer, analyst..."
+                placeholder="eFootball, streamer, analyst..."
                 value={form.primaryCategory}
                 onChange={(e) => setForm((f) => ({ ...f, primaryCategory: e.target.value }))}
                 className="w-full rounded-lg border border-white/15 bg-black/30 px-4 py-3 outline-none transition focus:border-violet-400/70 focus:ring-2 focus:ring-violet-500/30"
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm text-gray-300">Avatar URL</label>
-              <input
-                placeholder="https://..."
-                value={form.avatarUrl}
-                onChange={(e) => setForm((f) => ({ ...f, avatarUrl: e.target.value }))}
-                className="w-full rounded-lg border border-white/15 bg-black/30 px-4 py-3 outline-none transition focus:border-violet-400/70 focus:ring-2 focus:ring-violet-500/30"
-              />
+              <p className="mb-1 text-sm text-gray-300">Profile picture</p>
+              <p className="mb-3 text-xs text-gray-500">
+                One photo for your public page, directory cards, and overlays. JPEG, PNG, or WebP under 4 MB.
+              </p>
+              <div className="max-w-xs rounded-xl border border-white/10 bg-black/25 p-3">
+                <div className="aspect-square overflow-hidden rounded-xl bg-black/40 ring-1 ring-white/10">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    key={avatarPreview || 'default'}
+                    src={localPreview || publicImageSrc(profile?.avatarUrl || form.avatarUrl || null)}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    className={`h-full w-full ${
+                      avatarPreview ? 'object-cover' : 'object-contain p-3'
+                    }`}
+                  />
+                </div>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  disabled={photoBusy}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    e.target.value = ''
+                    if (!file) return
+                    if (localPreview?.startsWith('blob:')) URL.revokeObjectURL(localPreview)
+                    const blob = URL.createObjectURL(file)
+                    setLocalPreview(blob)
+                    setError(null)
+                    setPhotoBusy(true)
+                    try {
+                      const next = await creatorAuthApi.uploadMedia('avatar', file)
+                      setCreatorUserProfile(next)
+                      setProfile(next)
+                      setForm((f) => ({ ...f, avatarUrl: next.avatarUrl || '' }))
+                      URL.revokeObjectURL(blob)
+                      setLocalPreview(null)
+                    } catch (err: unknown) {
+                      const msg =
+                        err instanceof Error ? err.message : 'Could not upload photo'
+                      setError(msg)
+                    } finally {
+                      setPhotoBusy(false)
+                    }
+                  }}
+                  className="mt-2 w-full text-xs text-gray-300 file:mr-2 file:rounded-md file:border-0 file:bg-violet-600 file:px-2 file:py-1 file:text-xs file:font-semibold file:text-white"
+                />
+                {photoBusy ? (
+                  <p className="mt-2 text-xs text-violet-200">Saving photo…</p>
+                ) : null}
+                {profile?.avatarUrl || form.avatarUrl ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const next = await creatorAuthApi.clearMedia('avatar')
+                        setCreatorUserProfile(next)
+                        setProfile(next)
+                        setForm((f) => ({ ...f, avatarUrl: '' }))
+                      } catch (err: unknown) {
+                        const msg =
+                          err instanceof Error ? err.message : 'Could not remove photo'
+                        setError(msg)
+                      }
+                    }}
+                    className="mt-2 text-xs text-red-300 hover:text-red-200"
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="rounded-xl border border-white/10 bg-black/20 p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-violet-300/80">Content details</p>
@@ -327,9 +432,24 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
               />
               <p className="mt-1 text-xs text-gray-500">{form.packagesSummary.length}/1200</p>
             </div>
+            <div>
+              <label className="mb-1 block text-sm text-gray-300">Thank-you to fans</label>
+              <textarea
+                placeholder="Shown on your public page and after a fan pays on web or in the app."
+                rows={3}
+                maxLength={500}
+                value={form.fanThankYouMessage}
+                onChange={(e) => setForm((f) => ({ ...f, fanThankYouMessage: e.target.value }))}
+                className="w-full rounded-lg border border-white/15 bg-black/30 px-4 py-3 outline-none transition focus:border-violet-400/70 focus:ring-2 focus:ring-violet-500/30"
+              />
+              <p className="mt-1 text-xs text-gray-500">{form.fanThankYouMessage.length}/500</p>
+            </div>
             <div className="rounded-xl border border-white/10 bg-black/20 p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-violet-300/80">Social links</p>
-              <p className="mt-1 text-xs text-gray-500">Use full URLs so fans can verify your official channels.</p>
+              <p className="mt-1 text-xs text-gray-500">
+                TikTok or YouTube is required. An admin verifies the link by email before you can
+                generate OBS overlays. Instagram is optional.
+              </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <div>
@@ -366,7 +486,11 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
                 disabled={saving}
                 className="w-full rounded-lg bg-violet-600 px-5 py-3 font-semibold hover:bg-violet-500 disabled:opacity-60"
               >
-                {saving ? 'Saving...' : isOnboarding ? 'Save & open workspace' : 'Save profile'}
+                {saving
+                  ? 'Saving...'
+                  : isOnboarding
+                    ? 'Save & submit for review'
+                    : 'Save profile'}
               </button>
             </div>
           </form>
@@ -375,10 +499,13 @@ export function CreatorProfileSettings({ mode }: { mode: Mode }) {
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Public preview</p>
             <div className="mt-4 rounded-xl border border-white/10 bg-black/25 p-4">
               <div className="flex items-center gap-3">
-                <div className="h-12 w-12 overflow-hidden rounded-full bg-white/10">
-                  {avatarPreview ? (
-                    <img src={avatarPreview} alt={displayNamePreview} className="h-full w-full object-cover" />
-                  ) : null}
+                <div className="h-12 w-12 overflow-hidden rounded-full bg-black ring-1 ring-white/10">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={publicImageSrc(avatarPreview || null)}
+                    alt={displayNamePreview}
+                    className={`h-full w-full ${avatarPreview ? 'object-cover' : 'object-contain p-1'}`}
+                  />
                 </div>
                 <div>
                   <p className="font-semibold text-white">{displayNamePreview}</p>

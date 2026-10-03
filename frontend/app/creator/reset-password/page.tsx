@@ -3,11 +3,11 @@
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { FormEvent, Suspense, useState } from 'react'
-import { Loader2, Lock, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { creatorAuthApi } from '@/lib/creator-auth'
 import {
   AuthLoginShell,
-  authInputClass,
+  AuthPasswordInput,
   authLabelClass,
   authSubmitClass,
 } from '@/components/auth/AuthLoginShell'
@@ -99,39 +99,29 @@ function CreatorResetPasswordPageInner() {
             <label htmlFor="reset-password" className={authLabelClass}>
               New password
             </label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                id="reset-password"
-                required
-                type="password"
-                autoComplete="new-password"
-                minLength={6}
-                placeholder="At least 6 characters"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className={authInputClass}
-              />
-            </div>
+            <AuthPasswordInput
+              id="reset-password"
+              required
+              autoComplete="new-password"
+              minLength={6}
+              placeholder="At least 6 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
           </div>
           <div>
             <label htmlFor="reset-password-confirm" className={authLabelClass}>
               Confirm password
             </label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                id="reset-password-confirm"
-                required
-                type="password"
-                autoComplete="new-password"
-                minLength={6}
-                placeholder="Repeat password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                className={authInputClass}
-              />
-            </div>
+            <AuthPasswordInput
+              id="reset-password-confirm"
+              required
+              autoComplete="new-password"
+              minLength={6}
+              placeholder="Repeat password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+            />
           </div>
           <button type="submit" disabled={loading} className={authSubmitClass}>
             {loading ? (

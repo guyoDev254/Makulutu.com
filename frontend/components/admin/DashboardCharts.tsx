@@ -8,6 +8,18 @@ export type TrendPoint = {
   newSubscriptions: number
 }
 
+type PeriodCompare = {
+  label: string
+  completedPayments: number
+  newSubscriptions: number
+  revenueKes: number
+  previous?: {
+    completedPayments: number
+    newSubscriptions: number
+    revenueKes: number
+  }
+}
+
 type Props = {
   series: TrendPoint[]
   payments: {
@@ -18,18 +30,7 @@ type Props = {
   }
   formatKes: (amount: number) => string
   hideNumericAmounts: boolean
-}
-
-function sumWindow(points: TrendPoint[], lastN: number) {
-  const slice = points.slice(-lastN)
-  return slice.reduce(
-    (acc, p) => ({
-      revenue: acc.revenue + p.revenueKes,
-      payments: acc.payments + p.completedPayments,
-      subs: acc.subs + p.newSubscriptions,
-    }),
-    { revenue: 0, payments: 0, subs: 0 },
-  )
+  period?: PeriodCompare | null
 }
 
 function pctChange(prev: number, curr: number): number | null {
@@ -43,12 +44,20 @@ export function DashboardCharts({
   payments,
   formatKes,
   hideNumericAmounts,
+  period,
 }: Props) {
-  const last7 = sumWindow(series, 7)
-  const prev7 = sumWindow(series.slice(0, -7), 7)
-  const revDelta = pctChange(prev7.revenue, last7.revenue)
-  const payDelta = pctChange(prev7.payments, last7.payments)
-  const subDelta = pctChange(prev7.subs, last7.subs)
+  const rev = period?.revenueKes ?? series.reduce((s, p) => s + p.revenueKes, 0)
+  const pay = period?.completedPayments ?? series.reduce((s, p) => s + p.completedPayments, 0)
+  const subs = period?.newSubscriptions ?? series.reduce((s, p) => s + p.newSubscriptions, 0)
+  const revDelta = period?.previous
+    ? pctChange(period.previous.revenueKes, period.revenueKes)
+    : null
+  const payDelta = period?.previous
+    ? pctChange(period.previous.completedPayments, period.completedPayments)
+    : null
+  const subDelta = period?.previous
+    ? pctChange(period.previous.newSubscriptions, period.newSubscriptions)
+    : null
 
   const hasSeries = series.length > 0
   const maxRev = hasSeries ? Math.max(1, ...series.map((p) => p.revenueKes)) : 1
@@ -56,9 +65,10 @@ export function DashboardCharts({
   const maxSub = hasSeries ? Math.max(1, ...series.map((p) => p.newSubscriptions)) : 1
   const peakRevenueKes = hasSeries ? Math.max(...series.map((p) => p.revenueKes)) : 0
   const chartH = 112
-  const gap = 4
+  const gap = series.length > 20 ? 2 : 4
   const n = series.length
-  const barW = n > 0 ? Math.max(4, (300 - gap * (n - 1)) / n) : 4
+  const barW = n > 0 ? Math.max(3, (300 - gap * (n - 1)) / n) : 4
+  const skipLabel = n > 14 ? Math.ceil(n / 10) : 1
 
   const totalPayStatus =
     payments.completed + payments.pending + payments.failed || 1
@@ -81,28 +91,30 @@ export function DashboardCharts({
         }
       >
         {up ? '↑' : down ? '↓' : '→'} {Math.abs(v)}%
-        <span className="text-gray-500 font-normal"> vs prior week</span>
+        <span className="text-gray-500 font-normal"> vs prior period</span>
       </span>
     )
   }
+
+  const rangeHint = period?.label
+    ? `${period.label} · Africa/Nairobi`
+    : 'Africa/Nairobi calendar days'
 
   return (
     <div className="space-y-6" role="region" aria-label="Dashboard trends">
       <div className="grid lg:grid-cols-3 gap-4 sm:gap-6">
         <div className="lg:col-span-2 rounded-2xl bg-slate-900/45 p-5 sm:p-6 border border-slate-700/70 shadow-lg shadow-black/10">
           <h3 className="text-base font-semibold text-white mb-0.5">
-            Week-over-week performance
+            Period performance
           </h3>
-          <p className="text-xs text-slate-500 mb-4">
-            Last 7 days compared to the 7 days before that (UTC calendar days).
-          </p>
+          <p className="text-xs text-slate-500 mb-4">{rangeHint}</p>
           <div className="grid sm:grid-cols-3 gap-4">
             <div className="rounded-xl bg-slate-950/50 border border-slate-700/60 p-4">
               <p className="text-xs text-gray-400 uppercase tracking-wide">
-                Revenue (7d)
+                Revenue
               </p>
               <p className="text-2xl font-bold text-amber-300 mt-1 tabular-nums">
-                {hideNumericAmounts ? '—' : formatKes(last7.revenue)}
+                {hideNumericAmounts ? '—' : formatKes(rev)}
               </p>
               <p className="text-sm mt-2">
                 <Delta v={hideNumericAmounts ? null : revDelta} />
@@ -110,10 +122,10 @@ export function DashboardCharts({
             </div>
             <div className="rounded-xl bg-slate-950/50 border border-slate-700/60 p-4">
               <p className="text-xs text-gray-400 uppercase tracking-wide">
-                Completed payments (7d)
+                Completed payments
               </p>
               <p className="text-2xl font-bold text-emerald-300 mt-1 tabular-nums">
-                {last7.payments}
+                {pay}
               </p>
               <p className="text-sm mt-2">
                 <Delta v={payDelta} />
@@ -121,10 +133,10 @@ export function DashboardCharts({
             </div>
             <div className="rounded-xl bg-slate-950/50 border border-slate-700/60 p-4">
               <p className="text-xs text-gray-400 uppercase tracking-wide">
-                New subscriptions (7d)
+                New subscriptions
               </p>
               <p className="text-2xl font-bold text-sky-300 mt-1 tabular-nums">
-                {last7.subs}
+                {subs}
               </p>
               <p className="text-sm mt-2">
                 <Delta v={subDelta} />
@@ -137,7 +149,7 @@ export function DashboardCharts({
           <h3 className="text-base font-semibold text-white mb-0.5">
             Payment outcomes
           </h3>
-          <p className="text-xs text-slate-500 mb-4">All-time share by status</p>
+          <p className="text-xs text-slate-500 mb-4">Share by status in this range</p>
           <div className="flex-1 flex flex-col justify-center gap-4 min-h-[140px]">
             <div className="h-4 w-full rounded-full overflow-hidden flex bg-slate-950/80 border border-slate-700/50">
               {completedPct > 0 && (
@@ -193,7 +205,7 @@ export function DashboardCharts({
       <div className="grid lg:grid-cols-2 gap-4 sm:gap-6">
         <div className="rounded-2xl bg-slate-900/45 p-5 sm:p-6 border border-slate-700/70 shadow-lg shadow-black/10 overflow-x-auto">
           <h3 className="text-base font-semibold text-white mb-0.5">
-            Daily revenue (14 days)
+            Daily revenue
           </h3>
           <p className="text-xs text-slate-500 mb-4">Completed payments only (KES)</p>
           {!hasSeries ? (
@@ -224,15 +236,17 @@ export function DashboardCharts({
                     rx={2}
                     fill="rgb(251 191 36 / 0.85)"
                   />
-                  <text
-                    x={x + barW / 2}
-                    y={chartH + 14}
-                    textAnchor="middle"
-                    className="fill-gray-500"
-                    style={{ fontSize: 9 }}
-                  >
-                    {p.label.replace(' ', '')}
-                  </text>
+                  {i % skipLabel === 0 || i === n - 1 ? (
+                    <text
+                      x={x + barW / 2}
+                      y={chartH + 14}
+                      textAnchor="middle"
+                      className="fill-gray-500"
+                      style={{ fontSize: 9 }}
+                    >
+                      {p.label.replace(' ', '')}
+                    </text>
+                  ) : null}
                 </g>
               )
             })}
@@ -254,7 +268,7 @@ export function DashboardCharts({
 
         <div className="rounded-2xl bg-slate-900/45 p-5 sm:p-6 border border-slate-700/70 shadow-lg shadow-black/10 overflow-x-auto">
           <h3 className="text-base font-semibold text-white mb-0.5">
-            Activity (14 days)
+            Daily activity
           </h3>
           <p className="text-xs text-slate-500 mb-4">
             Completed payments (green) · New subscriptions (blue)
@@ -294,15 +308,17 @@ export function DashboardCharts({
                     rx={2}
                     fill="rgb(56 189 248 / 0.85)"
                   />
-                  <text
-                    x={x + barW / 2}
-                    y={chartH + 14}
-                    textAnchor="middle"
-                    className="fill-gray-500"
-                    style={{ fontSize: 9 }}
-                  >
-                    {p.label.replace(' ', '')}
-                  </text>
+                  {i % skipLabel === 0 || i === n - 1 ? (
+                    <text
+                      x={x + barW / 2}
+                      y={chartH + 14}
+                      textAnchor="middle"
+                      className="fill-gray-500"
+                      style={{ fontSize: 9 }}
+                    >
+                      {p.label.replace(' ', '')}
+                    </text>
+                  ) : null}
                 </g>
               )
             })}

@@ -21,7 +21,13 @@ import type {
   CreatorSupporterRankings,
 } from '@/components/admin/types'
 
-export type RevenuePresetId = 'today' | 'yesterday' | 'last7' | 'last30' | 'custom'
+export type RevenuePresetId =
+  | 'today'
+  | 'yesterday'
+  | 'thisWeek'
+  | 'last7'
+  | 'last30'
+  | 'custom'
 import { exportToCSV } from '@/components/admin/exportCsv'
 import { formatCurrency, formatAmountForRole as formatKesForRole, formatDate, shoutoutPlatformLabel, getStatusBadge } from '@/components/admin/format'
 
@@ -52,6 +58,9 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     obsSubscriptionMessageTemplate: '',
     obsShoutoutMessageTemplate: '',
     platformFeePercent: 5,
+    settlementPeriodHours: 24,
+    minWithdrawalKes: 500,
+    withdrawalFeeKes: 0,
   })
   const [settingsForm, setSettingsForm] = useState<any>({
     defaultMonthlyPrice: 1,
@@ -66,6 +75,9 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     obsSubscriptionMessageTemplate: '',
     obsShoutoutMessageTemplate: '',
     platformFeePercent: 5,
+    settlementPeriodHours: 24,
+    minWithdrawalKes: 500,
+    withdrawalFeeKes: 0,
   })
   
   // Pagination states
@@ -99,17 +111,29 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
   const [savingBookingId, setSavingBookingId] = useState<string | null>(null)
   const [payoutsPagination, setPayoutsPagination] = useState<PaginationInfo>({
     page: 1,
-    limit: 10,
+    limit: 20,
     total: 0,
     totalPages: 0,
   })
   const [revenueData, setRevenueData] = useState<RevenueBreakdownResponse | null>(null)
   const [walletSummary, setWalletSummary] = useState<CreatorWalletSummary | null>(null)
   const [payoutRequests, setPayoutRequests] = useState<any[]>([])
+  const [payoutStatusCounts, setPayoutStatusCounts] = useState<{
+    pending: number
+    approved: number
+    rejected: number
+    paid: number
+    all: number
+    pendingKes: number
+    approvedKes: number
+  } | null>(null)
   const [payoutRequesting, setPayoutRequesting] = useState(false)
   const [reviewingPayoutId, setReviewingPayoutId] = useState<string | null>(null)
   const [revenueLoading, setRevenueLoading] = useState(false)
   const [revenuePreset, setRevenuePreset] = useState<RevenuePresetId>('today')
+  const [overviewPreset, setOverviewPreset] = useState<RevenuePresetId>('thisWeek')
+  const [overviewFrom, setOverviewFrom] = useState('')
+  const [overviewTo, setOverviewTo] = useState('')
   const [revenueFrom, setRevenueFrom] = useState('')
   const [revenueTo, setRevenueTo] = useState('')
   const [selectedShoutoutIds, setSelectedShoutoutIds] = useState<Set<string>>(() => new Set())
@@ -143,6 +167,8 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
   // Search and filter states
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [payoutStatusFilter, setPayoutStatusFilter] = useState<string>('all')
+  const [exportingPayouts, setExportingPayouts] = useState(false)
   const [debouncedSearch, setDebouncedSearch] = useState('')
   
   // Edit states
@@ -205,14 +231,16 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     }
 
     void fetchDashboardData()
-
-    if (activeTab === 'subscriptions' && workspace === 'admin') {
-      void fetchUsers()
-    }
-  }, [router, activeTab, workspace])
+  }, [router, workspace])
 
   useEffect(() => {
-    if (activeTab === 'users') {
+    if (workspace === 'creator' && (activeTab === 'users' || activeTab === 'rankings')) {
+      setActiveTab('subscriptions')
+    }
+  }, [workspace, activeTab])
+
+  useEffect(() => {
+    if (activeTab === 'users' && workspace !== 'creator') {
       fetchUsers()
     } else if (activeTab === 'creators' && workspace === 'admin') {
       fetchCreators()
@@ -253,12 +281,29 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     coachingBookingsPagination.page,
     payoutsPagination.page,
     coachingBookingStatusFilter,
+    payoutStatusFilter,
     workspace,
   ])
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = async (opts?: {
+    preset?: RevenuePresetId
+    from?: string
+    to?: string
+  }) => {
     try {
-      const statsRes = await http.get(`${apiPrefix}/dashboard`)
+      const preset = opts?.preset ?? overviewPreset
+      const from = (opts?.from ?? overviewFrom).trim()
+      const to = (opts?.to ?? overviewTo).trim()
+      const params = new URLSearchParams({ preset })
+      if (preset === 'custom') {
+        if (!from || !to) {
+          setLoading(false)
+          return
+        }
+        params.set('from', from)
+        params.set('to', to)
+      }
+      const statsRes = await http.get(`${apiPrefix}/dashboard?${params}`)
       setStats(statsRes.data)
       if (workspace === 'creator') {
         try {
@@ -274,7 +319,6 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
         }
       } else {
         setWalletSummary(null)
-        setPayoutRequests([])
       }
       setLoading(false)
     } catch (error: any) {
@@ -337,7 +381,14 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
 
   const patchCreatorAdmin = async (
     id: string,
-    body: { isActive?: boolean; supportEnabled?: boolean; onboardingComplete?: boolean },
+    body: {
+      isActive?: boolean
+      supportEnabled?: boolean
+      onboardingComplete?: boolean
+      streamVerified?: boolean
+      streamReviewAction?: 'approve' | 'reject'
+      streamReviewNote?: string
+    },
   ) => {
     if (workspace !== 'admin') return
     setUpdatingCreatorId(id)
@@ -347,11 +398,33 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
       setCreators((prev) => prev.map((c) => (c.id === id ? { ...c, ...updated } : c)))
     } catch (error: any) {
       const msg =
-        error.response?.data?.message || 'Failed to update streamer'
-      Swal.fire({ icon: 'error', title: 'Error', text: msg, confirmButtonColor: '#dc2626' })
+        formatApiErrorMessage(error.response?.data, 'Failed to update streamer') ||
+        error.response?.data?.message ||
+        'Failed to update streamer'
+      Swal.fire({ icon: 'error', title: 'Could not update streamer', text: Array.isArray(msg) ? msg.join(' ') : String(msg), confirmButtonColor: '#dc2626' })
     } finally {
       setUpdatingCreatorId(null)
     }
+  }
+
+  const rejectCreatorStream = async (c: { id: string; displayName: string }) => {
+    if (workspace !== 'admin') return
+    const result = await Swal.fire({
+      title: 'Reject stream links',
+      input: 'textarea',
+      inputLabel: `Reason emailed to ${c.displayName}`,
+      inputPlaceholder: 'We could not confirm this TikTok or YouTube channel…',
+      showCancelButton: true,
+      confirmButtonText: 'Email rejection',
+      confirmButtonColor: '#dc2626',
+      inputValidator: (value) =>
+        !value || value.trim().length < 8 ? 'Write at least 8 characters' : undefined,
+    })
+    if (!result.isConfirmed) return
+    await patchCreatorAdmin(c.id, {
+      streamReviewAction: 'reject',
+      streamReviewNote: String(result.value || '').trim(),
+    })
   }
 
   const fetchSubscriptions = async () => {
@@ -610,11 +683,12 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     try {
       if (workspace === 'creator') {
         const res = await http.get(`${apiPrefix}/payout-requests`)
-        const rows = res.data || []
+        const rows = Array.isArray(res.data) ? res.data : []
         setPayoutRequests(rows)
+        setPayoutStatusCounts(null)
         setPayoutsPagination({
           page: 1,
-          limit: rows.length || 10,
+          limit: rows.length || 20,
           total: rows.length,
           totalPages: 1,
         })
@@ -625,10 +699,17 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
         limit: payoutsPagination.limit.toString(),
       })
       if (debouncedSearch) params.append('search', debouncedSearch)
-      if (statusFilter !== 'all') params.append('status', statusFilter.toUpperCase())
+      if (payoutStatusFilter !== 'all') params.append('status', payoutStatusFilter.toUpperCase())
       const res = await http.get(`${apiPrefix}/payout-requests?${params}`)
-      setPayoutRequests(res.data.data || [])
-      setPayoutsPagination(res.data.pagination)
+      const payload = res.data
+      const rows = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : []
+      setPayoutRequests(rows)
+      if (payload?.statusCounts) setPayoutStatusCounts(payload.statusCounts)
+      if (payload?.pagination) setPayoutsPagination(payload.pagination)
     } catch (error: unknown) {
       console.error('Error fetching payout requests:', error)
       Swal.fire({
@@ -677,6 +758,12 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
       setRevenueLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (overviewPreset === 'custom') return
+    void fetchDashboardData({ preset: overviewPreset })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- custom range uses Apply only
+  }, [overviewPreset, workspace])
 
   useEffect(() => {
     if (activeTab !== 'revenue') return
@@ -862,7 +949,7 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
   const handleRefresh = async () => {
     setRefreshing(true)
     await fetchDashboardData()
-    if (activeTab === 'users') await fetchUsers()
+    if (activeTab === 'users' && workspace !== 'creator') await fetchUsers()
     if (activeTab === 'creators' && workspace === 'admin') await fetchCreators()
     if (activeTab === 'subscriptions') await fetchSubscriptions()
     if (activeTab === 'payments') await fetchPayments()
@@ -950,16 +1037,28 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     })
   }
 
+  const patchUserWhatsApp = (userId: string, addedToWhatsApp: boolean) => {
+    setUsers((prev) =>
+      prev.map((u) => (u.id === userId ? { ...u, addedToWhatsApp } : u)),
+    )
+    setSubscriptions((prev) =>
+      prev.map((s) =>
+        s.user?.id === userId
+          ? { ...s, user: { ...s.user, addedToWhatsApp } }
+          : s,
+      ),
+    )
+  }
+
   const handleConfirmWhatsApp = async (user: any) => {
+    if (!user?.id) return
     try {
       await http.patch(`${apiPrefix}/users/${user.id}/whatsapp-confirm`)
-      setUsers((prev) =>
-        prev.map((u) => (u.id === user.id ? { ...u, addedToWhatsApp: true } : u))
-      )
+      patchUserWhatsApp(user.id, true)
       Swal.fire({
         icon: 'success',
         title: 'Confirmed',
-        text: `${user.name} has been marked as added to WhatsApp group`,
+        text: `${user.name || 'This member'} has been marked as added to the WhatsApp group`,
         timer: 2000,
         showConfirmButton: false,
       })
@@ -975,11 +1074,10 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
   }
 
   const handleMarkWhatsAppRemoved = async (user: any) => {
+    if (!user?.id) return
     try {
       await http.patch(`${apiPrefix}/users/${user.id}/whatsapp-remove`)
-      setUsers((prev) =>
-        prev.map((u) => (u.id === user.id ? { ...u, addedToWhatsApp: false } : u))
-      )
+      patchUserWhatsApp(user.id, false)
       Swal.fire({
         icon: 'success',
         title: 'Updated',
@@ -993,6 +1091,81 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
         icon: 'error',
         title: 'Error',
         text: error.response?.data?.message || 'Failed to update',
+        confirmButtonColor: '#dc2626',
+      })
+    }
+  }
+
+  const handleDeleteUser = async (user: any) => {
+    const label = user.name || user.tiktokUsername || 'this fan'
+    const result = await Swal.fire({
+      icon: 'warning',
+      title: workspace === 'creator' ? 'Remove this member?' : 'Delete this user?',
+      text: `${label} will be removed from this page. Memberships are deleted. Payment records stay in your wallet history.`,
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#4b5563',
+      confirmButtonText: 'Delete',
+    })
+    if (!result.isConfirmed) return
+    try {
+      await http.delete(`${apiPrefix}/users/${user.id}`)
+      setEditingUser((current: any) => (current?.id === user.id ? null : current))
+      await fetchUsers()
+      await fetchSubscriptions()
+      await fetchDashboardData()
+      Swal.fire({
+        icon: 'success',
+        title: 'Removed',
+        text: `${label} was deleted`,
+        timer: 1800,
+        showConfirmButton: false,
+      })
+    } catch (error: any) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Could not delete',
+        text: error.response?.data?.message || 'Failed to delete fan',
+        confirmButtonColor: '#dc2626',
+      })
+    }
+  }
+
+  const handleDeleteSubscription = async (subscription: any) => {
+    const label =
+      subscription.user?.name ||
+      subscription.user?.tiktokUsername ||
+      'this membership'
+    const result = await Swal.fire({
+      icon: 'warning',
+      title: 'Delete this membership?',
+      text: `${label} will lose this subscription. Payments are kept.`,
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#4b5563',
+      confirmButtonText: 'Delete',
+    })
+    if (!result.isConfirmed) return
+    try {
+      await http.delete(`${apiPrefix}/subscriptions/${subscription.id}`)
+      setEditingSubscription((current: any) =>
+        current?.id === subscription.id ? null : current,
+      )
+      await fetchSubscriptions()
+      await fetchUsers()
+      await fetchDashboardData()
+      Swal.fire({
+        icon: 'success',
+        title: 'Removed',
+        text: 'Membership was deleted',
+        timer: 1800,
+        showConfirmButton: false,
+      })
+    } catch (error: any) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Could not delete',
+        text: error.response?.data?.message || 'Failed to delete membership',
         confirmButtonColor: '#dc2626',
       })
     }
@@ -1109,14 +1282,18 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
       const response = await http.put(`${apiPrefix}/users/${editingUser.id}`, editUserForm)
       Swal.fire({
         icon: 'success',
-        title: 'User Updated',
-        text: 'User information has been updated successfully',
+        title: workspace === 'creator' ? 'Member updated' : 'User Updated',
+        text:
+          workspace === 'creator'
+            ? 'Name, username, and contact details were saved.'
+            : 'User information has been updated successfully',
         timer: 1500,
         showConfirmButton: false,
       })
       setEditingUser(null)
       setEditUserForm({})
       await fetchUsers()
+      await fetchSubscriptions()
       await fetchDashboardData() // Refresh stats
     } catch (error: any) {
       Swal.fire({
@@ -1457,22 +1634,20 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
 
   const handleRequestPayout = async () => {
     if (workspace !== 'creator') return
-    const lockedStatuses = new Set(['PENDING', 'APPROVED', 'PAID'])
-    const lockedKes = (payoutRequests || []).reduce((sum, row) => {
-      if (!lockedStatuses.has(String(row?.status || ''))) return sum
-      const n = Number(row?.amountKes || 0)
-      return Number.isFinite(n) ? sum + n : sum
-    }, 0)
-    const netKes = Number(walletSummary?.totals?.netKes || 0)
-    const maxAvailable = Math.max(0, Math.round((netKes - lockedKes) * 100) / 100)
-    const hasPending = (payoutRequests || []).some(
-      (row) => String(row?.status || '') === 'PENDING',
+    const maxAvailable = Number(
+      walletSummary?.withdrawableKes ?? walletSummary?.availableKes ?? 0,
+    )
+    const minWithdrawal = Number(walletSummary?.minWithdrawalKes)
+    const minKes = minWithdrawal > 0 ? minWithdrawal : 500
+    const feeKes = Number(walletSummary?.withdrawalFeeKes ?? 0)
+    const hasPending = (payoutRequests || []).some((row) =>
+      ['PENDING', 'APPROVED'].includes(String(row?.status || '')),
     )
     if (hasPending) {
       await Swal.fire({
         icon: 'info',
-        title: 'Pending request exists',
-        text: 'You already have a pending payout request. Wait for review before creating another one.',
+        title: 'Payout in progress',
+        text: 'You already have a payout in progress. Wait for it to finish before requesting another.',
         confirmButtonColor: '#7c3aed',
       })
       return
@@ -1487,41 +1662,125 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
       return
     }
 
+    let dest: {
+      channel?: string
+      label?: string
+      bankName?: string | null
+      last4?: string
+    } | null = null
+    let banks: { name: string; code: string }[] = []
+    try {
+      const destRes = await http.get(`${apiPrefix}/payout-destination`)
+      dest = destRes.data || null
+    } catch {
+      dest = null
+    }
+    try {
+      const banksRes = await http.get(`${apiPrefix}/payout-banks`)
+      const raw = banksRes.data
+      banks = Array.isArray(raw) ? raw : Array.isArray(raw?.banks) ? raw.banks : []
+    } catch {
+      banks = []
+    }
+    const esc = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+    const defaultMethod = dest?.channel === 'BANK' ? 'BANK' : 'MPESA'
+    const bankOptions = banks
+      .map((b) => `<option value="${esc(b.code)}">${esc(b.name)}</option>`)
+      .join('')
+
     const result = await Swal.fire({
-      title: 'Request payout',
+      title: 'Send payout',
       html: `
         <div style="text-align:left; display:grid; gap:10px;">
-          <div style="font-size:12px;color:#94a3b8;">Available: KES ${maxAvailable.toFixed(2)}</div>
-          <div style="font-size:12px;color:#94a3b8;">Minimum request: KES 100</div>
-          <input id="payout-amount" class="swal2-input" type="number" min="100" max="${maxAvailable.toFixed(2)}" step="0.01" placeholder="Amount (KES)" />
-          <input id="payout-channel" class="swal2-input" maxlength="80" placeholder="Payout channel (e.g. M-Pesa 2547...)" />
-          <textarea id="payout-notes" class="swal2-textarea" maxlength="1000" placeholder="Optional notes"></textarea>
+          <div style="font-size:12px;color:#94a3b8;">Paystack sends this now to M-Pesa or your Kenyan bank. No admin approval.</div>
+          <div style="font-size:12px;color:#94a3b8;">Available: KES ${maxAvailable.toFixed(2)} · Min: KES ${minKes.toFixed(2)} · Fee: KES ${feeKes.toFixed(2)}</div>
+          <input id="payout-amount" class="swal2-input" type="number" min="${minKes}" max="${maxAvailable.toFixed(2)}" step="0.01" placeholder="Amount (KES)" />
+          <div style="display:flex;gap:12px;font-size:13px;color:#e2e8f0;">
+            <label><input type="radio" name="payout-method" value="MPESA" ${defaultMethod === 'MPESA' ? 'checked' : ''} /> M-Pesa</label>
+            <label><input type="radio" name="payout-method" value="BANK" ${defaultMethod === 'BANK' ? 'checked' : ''} /> Bank account</label>
+          </div>
+          <div id="payout-mpesa-fields">
+            <input id="payout-channel" class="swal2-input" maxlength="80" placeholder="M-Pesa number (e.g. 254712345678)" />
+          </div>
+          <div id="payout-bank-fields" style="display:none;">
+            <select id="payout-bank-code" class="swal2-select" style="width:100%;max-height:220px;">
+              <option value="">Select bank${banks.length ? ` (${banks.length})` : ''}</option>
+              ${bankOptions || '<option value="" disabled>No banks loaded — try again</option>'}
+            </select>
+            <input id="payout-account-number" class="swal2-input" maxlength="32" placeholder="Account number" />
+            <input id="payout-account-name" class="swal2-input" maxlength="80" placeholder="Name on the account" />
+          </div>
+          <textarea id="payout-notes" class="swal2-textarea" maxlength="1000" placeholder="Optional note"></textarea>
         </div>
       `,
       focusConfirm: false,
       showCancelButton: true,
-      confirmButtonText: 'Submit request',
+      confirmButtonText: 'Send now',
       confirmButtonColor: '#7c3aed',
+      didOpen: () => {
+        const sync = () => {
+          const bank =
+            (document.querySelector('input[name=payout-method]:checked') as HTMLInputElement | null)
+              ?.value === 'BANK'
+          const mpesa = document.getElementById('payout-mpesa-fields')
+          const bankEl = document.getElementById('payout-bank-fields')
+          if (mpesa) mpesa.style.display = bank ? 'none' : 'block'
+          if (bankEl) bankEl.style.display = bank ? 'grid' : 'none'
+        }
+        document.querySelectorAll('input[name=payout-method]').forEach((el) => {
+          el.addEventListener('change', sync)
+        })
+        sync()
+      },
       preConfirm: () => {
         const amountInput = document.getElementById('payout-amount') as HTMLInputElement | null
-        const channelInput = document.getElementById('payout-channel') as HTMLInputElement | null
-        const notesInput = document.getElementById('payout-notes') as HTMLTextAreaElement | null
+        const method =
+          (document.querySelector('input[name=payout-method]:checked') as HTMLInputElement | null)
+            ?.value || 'MPESA'
+        const notes = (document.getElementById('payout-notes') as HTMLTextAreaElement | null)?.value?.trim() || ''
         const amount = Number(amountInput?.value || 0)
-        const payoutChannel = channelInput?.value?.trim() || ''
-        const notes = notesInput?.value?.trim() || ''
         if (!Number.isFinite(amount) || amount <= 0) {
           Swal.showValidationMessage('Enter a valid amount.')
           return null
         }
-        if (amount < 100) {
-          Swal.showValidationMessage('Minimum payout request is KES 100.')
+        if (amount < minKes) {
+          Swal.showValidationMessage(`Minimum payout request is KES ${minKes.toFixed(2)}.`)
           return null
         }
         if (amount > maxAvailable) {
           Swal.showValidationMessage(`Amount cannot exceed KES ${maxAvailable.toFixed(2)}.`)
           return null
         }
-        return { amountKes: amount, payoutChannel, notes }
+        if (method === 'BANK') {
+          const bankSelect = document.getElementById('payout-bank-code') as HTMLSelectElement | null
+          const accountNumber =
+            (document.getElementById('payout-account-number') as HTMLInputElement | null)?.value?.trim() || ''
+          const accountName =
+            (document.getElementById('payout-account-name') as HTMLInputElement | null)?.value?.trim() || ''
+          const bankCode = bankSelect?.value || ''
+          const bankName = bankSelect?.selectedOptions?.[0]?.text || ''
+          if (!bankCode || accountNumber.replace(/\s+/g, '').length < 5) {
+            Swal.showValidationMessage('Select a bank and enter the account number.')
+            return null
+          }
+          return {
+            amountKes: amount,
+            channel: 'BANK',
+            bankCode,
+            bankName,
+            accountNumber,
+            accountName,
+            notes,
+          }
+        }
+        const payoutChannel =
+          (document.getElementById('payout-channel') as HTMLInputElement | null)?.value?.trim() || ''
+        if (!payoutChannel) {
+          Swal.showValidationMessage('Enter the M-Pesa number Paystack should pay.')
+          return null
+        }
+        return { amountKes: amount, channel: 'MPESA', payoutChannel, notes }
       },
     })
 
@@ -1537,8 +1796,8 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
       setPayoutRequests(payoutsRes.data || [])
       await Swal.fire({
         icon: 'success',
-        title: 'Request submitted',
-        text: 'Your payout request has been submitted for review.',
+        title: 'Payout sending',
+        text: 'Paystack is sending this to your M-Pesa number or bank. You will get a confirmation when it lands.',
         confirmButtonColor: '#7c3aed',
       })
     } catch (error: any) {
@@ -1562,32 +1821,17 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
   ) => {
     if (workspace === 'creator') return
     const result = await Swal.fire({
-      title:
-        status === 'APPROVED'
-          ? 'Approve payout request'
-          : status === 'REJECTED'
-            ? 'Reject payout request'
-            : 'Mark payout as paid',
+      title: 'Return this payout to the streamer wallet?',
       html: `
         <div style="text-align:left; display:grid; gap:10px;">
-          ${
-            status === 'PAID'
-              ? '<input id="payout-reference" class="swal2-input" maxlength="120" placeholder="Payout reference (optional)" />'
-              : ''
-          }
-          <textarea id="payout-review-notes" class="swal2-textarea" maxlength="1000" placeholder="Review notes (optional)"></textarea>
+          <p style="font-size:12px;color:#94a3b8;margin:0;">Use this only if Paystack has not already paid the streamer. The reserved amount goes back to their wallet.</p>
+          <textarea id="payout-review-notes" class="swal2-textarea" maxlength="1000" placeholder="Reason (optional)"></textarea>
         </div>
       `,
       focusConfirm: false,
       showCancelButton: true,
-      confirmButtonText:
-        status === 'APPROVED'
-          ? 'Approve'
-          : status === 'REJECTED'
-            ? 'Reject'
-            : 'Mark paid',
-      confirmButtonColor:
-        status === 'APPROVED' ? '#0891b2' : status === 'REJECTED' ? '#dc2626' : '#16a34a',
+      confirmButtonText: 'Return funds',
+      confirmButtonColor: '#dc2626',
       preConfirm: () => {
         const notesInput = document.getElementById(
           'payout-review-notes',
@@ -1631,6 +1875,52 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
       })
     } finally {
       setReviewingPayoutId(null)
+    }
+  }
+
+  const handleExportPayoutBatch = async (status: 'APPROVED' | 'ALL' = 'APPROVED') => {
+    if (workspace !== 'admin') return
+    setExportingPayouts(true)
+    try {
+      const res = await http.get(`${apiPrefix}/payout-requests/export`, {
+        params: {
+          status,
+          ...(debouncedSearch ? { search: debouncedSearch } : {}),
+        },
+        responseType: 'blob',
+      })
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const stamp = new Date().toISOString().slice(0, 10)
+      a.href = url
+      a.download = `payout-batch-${status.toLowerCase()}-${stamp}.csv`
+      a.click()
+      window.URL.revokeObjectURL(url)
+    } catch (error: unknown) {
+      let message = 'Could not export payout batch.'
+      const err = error as { response?: { data?: unknown } }
+      const data = err.response?.data
+      if (data instanceof Blob) {
+        try {
+          const parsed = JSON.parse(await data.text()) as unknown
+          message = formatApiErrorMessage(parsed, message)
+        } catch {
+          /* keep fallback */
+        }
+      } else if (isAxiosNetworkError(error)) {
+        message = apiNetworkErrorHint()
+      } else {
+        message = formatApiErrorMessage(data, message)
+      }
+      await Swal.fire({
+        icon: 'error',
+        title: 'Export failed',
+        text: message,
+        confirmButtonColor: '#dc2626',
+      })
+    } finally {
+      setExportingPayouts(false)
     }
   }
 
@@ -1695,6 +1985,10 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     setSearchQuery,
     statusFilter,
     setStatusFilter,
+    payoutStatusFilter,
+    setPayoutStatusFilter,
+    payoutStatusCounts,
+    exportingPayouts,
     editingUser,
     setEditingUser,
     editingSubscription,
@@ -1720,6 +2014,7 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     fetchUsers,
     fetchCreators,
     patchCreatorAdmin,
+    rejectCreatorStream,
     emailCreatorFromAdmin,
     creatorSuperProfileOpen,
     creatorSuperProfile,
@@ -1750,6 +2045,12 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     revenueLoading,
     revenuePreset,
     setRevenuePreset,
+    overviewPreset,
+    setOverviewPreset,
+    overviewFrom,
+    setOverviewFrom,
+    overviewTo,
+    setOverviewTo,
     revenueFrom,
     setRevenueFrom,
     revenueTo,
@@ -1764,6 +2065,8 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     handleEditUser,
     handleConfirmWhatsApp,
     handleMarkWhatsAppRemoved,
+    handleDeleteUser,
+    handleDeleteSubscription,
     isAdminOrSuper,
     isSuperAdmin,
     handleSaveUser,
@@ -1779,6 +2082,7 @@ export function useAdminDashboard(workspace: DashboardWorkspace = 'admin') {
     formatAmountForRole,
     handleRequestPayout,
     handleReviewPayoutRequest,
+    handleExportPayoutBatch,
     formatDate,
     shoutoutPlatformLabel,
     getStatusBadge,

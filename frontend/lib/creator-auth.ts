@@ -19,7 +19,13 @@ export type CreatorProfile = {
   onboardingComplete: boolean
   isActive: boolean
   supportEnabled: boolean
+  fanThankYouMessage?: string | null
+  thankYouMessage?: string | null
   emailVerifiedAt?: string | null
+  streamVerifiedAt?: string | null
+  streamLinksSubmittedAt?: string | null
+  streamReviewNote?: string | null
+  streamVerified?: boolean
 }
 
 type CreatorAuthResponse = {
@@ -30,7 +36,9 @@ type CreatorAuthResponse = {
 type CreatorSignupResponse = {
   ok: boolean
   requiresEmailVerification: boolean
+  email?: string
   message: string
+  debugOtp?: string
 }
 
 export function getCreatorToken(): string | null {
@@ -91,6 +99,7 @@ export const creatorAuthApi = {
     displayName: string
     slug: string
     bio?: string
+    dateOfBirth: string
   }) =>
     request<CreatorSignupResponse>('/creator-auth/signup', {
       method: 'POST',
@@ -105,6 +114,12 @@ export const creatorAuthApi = {
 
   verifyEmail: (token: string) =>
     request<{ ok: boolean; message: string }>('/creator-auth/verify-email?token=' + encodeURIComponent(token)),
+
+  verifyEmailOtp: (email: string, code: string) =>
+    request<{ ok: boolean; message: string }>('/creator-auth/verify-email-otp', {
+      method: 'POST',
+      body: JSON.stringify({ email, code }),
+    }),
 
   resendVerification: (email: string) =>
     request<{ ok: boolean; message: string }>('/creator-auth/resend-verification', {
@@ -137,10 +152,48 @@ export const creatorAuthApi = {
     tiktokUrl?: string | null
     instagramUrl?: string | null
     youtubeUrl?: string | null
+    fanThankYouMessage?: string | null
     onboardingComplete?: boolean
   }) =>
     request<CreatorProfile>('/creator-auth/profile', {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+
+  uploadAvatar: async (file: File) => {
+    return creatorAuthApi.uploadMedia('avatar', file)
+  },
+
+  uploadMedia: async (slot: 'avatar', file: File) => {
+    const token = getCreatorToken()
+    const body = new FormData()
+    body.append('file', file)
+    const res = await fetch(`${API_BASE_URL}/creator-auth/media/${slot}`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body,
+    })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(formatApiErrorMessage(json, 'Could not upload photo'))
+    }
+    return json as CreatorProfile
+  },
+
+  clearMedia: async (slot: 'avatar') => {
+    const token = getCreatorToken()
+    const res = await fetch(`${API_BASE_URL}/creator-auth/media/${slot}`, {
+      method: 'DELETE',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(formatApiErrorMessage(json, 'Could not remove photo'))
+    }
+    return json as CreatorProfile
+  },
 }

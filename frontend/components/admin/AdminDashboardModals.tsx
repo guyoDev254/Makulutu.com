@@ -1,6 +1,7 @@
 'use client'
 
-import { Lock, X, Loader2, Save, ExternalLink, RotateCcw } from 'lucide-react'
+import { Lock, X, Loader2, Save, ExternalLink, RotateCcw, Trash2 } from 'lucide-react'
+import { AuthPasswordInput } from '@/components/auth/AuthLoginShell'
 import type { AdminDashboardModel } from '@/components/admin/adminDashboardTypes'
 
 export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) {
@@ -16,12 +17,14 @@ export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) 
     editUserForm,
     setEditUserForm,
     handleSaveUser,
+    handleDeleteUser,
     editingSubscription,
     setEditingSubscription,
     editSubscriptionForm,
     setEditSubscriptionForm,
     calculateDiscountedAmount,
     handleSaveSubscription,
+    handleDeleteSubscription,
     editingPayment,
     setEditingPayment,
     editPaymentForm,
@@ -72,34 +75,31 @@ export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) 
             <div className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Current password</label>
-                <input
-                  type="password"
+                <AuthPasswordInput
+                  showLock={false}
                   value={changePasswordForm.oldPassword}
                   onChange={(e) => setChangePasswordForm({ ...changePasswordForm, oldPassword: e.target.value })}
                   placeholder="Enter current password"
-                  className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
                   autoComplete="current-password"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">New password</label>
-                <input
-                  type="password"
+                <AuthPasswordInput
+                  showLock={false}
                   value={changePasswordForm.newPassword}
                   onChange={(e) => setChangePasswordForm({ ...changePasswordForm, newPassword: e.target.value })}
                   placeholder="At least 6 characters"
-                  className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
                   autoComplete="new-password"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Confirm new password</label>
-                <input
-                  type="password"
+                <AuthPasswordInput
+                  showLock={false}
                   value={changePasswordForm.confirmPassword}
                   onChange={(e) => setChangePasswordForm({ ...changePasswordForm, confirmPassword: e.target.value })}
                   placeholder="Confirm new password"
-                  className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
                   autoComplete="new-password"
                 />
               </div>
@@ -132,7 +132,9 @@ export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) 
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-gray-800 rounded-xl border border-gray-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-700 flex items-center justify-between">
-              <h2 className="text-2xl font-bold text-white">Edit User</h2>
+              <h2 className="text-2xl font-bold text-white">
+                {admin.workspace === 'creator' ? 'Edit fan' : 'Edit user'}
+              </h2>
               <button
                 onClick={() => setEditingUser(null)}
                 className="p-2 hover:bg-gray-700 rounded-lg transition"
@@ -151,7 +153,7 @@ export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) 
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">TikTok Username</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Username</label>
                 <input
                   type="text"
                   value={editUserForm.tiktokUsername}
@@ -177,6 +179,7 @@ export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) 
                   className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
                 />
               </div>
+              {admin.workspace !== 'creator' ? (
               <div className="flex items-center gap-3">
                 <input
                   type="checkbox"
@@ -187,21 +190,31 @@ export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) 
                 />
                 <label htmlFor="isActive" className="text-sm font-medium text-gray-300">Active User</label>
               </div>
+              ) : null}
             </div>
-            <div className="p-6 border-t border-gray-700 flex justify-end gap-3">
+            <div className="p-6 border-t border-gray-700 flex flex-wrap justify-between gap-3">
               <button
-                onClick={() => setEditingUser(null)}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition"
+                onClick={() => handleDeleteUser(editingUser)}
+                className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 rounded-lg transition flex items-center gap-2"
               >
-                Cancel
+                <Trash2 className="w-4 h-4" />
+                {admin.workspace === 'creator' ? 'Delete member' : 'Delete user'}
               </button>
-              <button
-                onClick={handleSaveUser}
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition flex items-center gap-2"
-              >
-                <Save className="w-4 h-4" />
-                Save Changes
-              </button>
+              <div className="flex gap-3 ml-auto">
+                <button
+                  onClick={() => setEditingUser(null)}
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveUser}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition flex items-center gap-2"
+                >
+                  <Save className="w-4 h-4" />
+                  Save Changes
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -369,20 +382,29 @@ export function AdminDashboardModals({ admin }: { admin: AdminDashboardModel }) 
                 </div>
               </div>
             </div>
-            <div className="p-6 border-t border-gray-700 flex justify-end gap-3">
+            <div className="p-6 border-t border-gray-700 flex flex-wrap justify-between gap-3">
               <button
-                onClick={() => setEditingSubscription(null)}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition"
+                onClick={() => handleDeleteSubscription(editingSubscription)}
+                className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-300 rounded-lg transition flex items-center gap-2"
               >
-                Cancel
+                <Trash2 className="w-4 h-4" />
+                Delete membership
               </button>
-              <button
-                onClick={handleSaveSubscription}
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition flex items-center gap-2"
-              >
-                <Save className="w-4 h-4" />
-                Save Changes
-              </button>
+              <div className="flex gap-3 ml-auto">
+                <button
+                  onClick={() => setEditingSubscription(null)}
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveSubscription}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition flex items-center gap-2"
+                >
+                  <Save className="w-4 h-4" />
+                  Save Changes
+                </button>
+              </div>
             </div>
           </div>
         </div>

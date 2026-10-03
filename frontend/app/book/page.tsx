@@ -9,6 +9,7 @@ import { z } from 'zod'
 import Swal from 'sweetalert2'
 import { ArrowLeft, CalendarCheck, ClipboardList, Loader2, Phone, TrendingUp } from 'lucide-react'
 import { SiteNav } from '@/components/SiteNav'
+import { SiteFooter } from '@/components/SiteFooter'
 import {
   API_BASE_URL,
   apiNetworkErrorHint,
@@ -16,7 +17,8 @@ import {
   isFetchNetworkError,
 } from '@/lib/api-origin'
 import { coachingBookingApi, subscriptionApi } from '@/lib/api'
-import { SITE_NAME, SITE_NAME_CLASS } from '@/lib/site-brand'
+import { fanAuthApi, fanPortalApi, getFanToken } from '@/lib/fan-auth'
+import { SITE_NAME } from '@/lib/site-brand'
 
 function escapeHtml(text: string) {
   return text
@@ -181,6 +183,7 @@ export default function BookPage() {
     handleSubmit,
     watch,
     reset,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<BookingForm>({
     resolver: zodResolver(bookingSchema),
@@ -197,12 +200,31 @@ export default function BookPage() {
   const needsPay = service === 'account_review' || service === 'both'
   const creatorScopeBlocked = !!creatorSlug && !!creatorScopeError
 
+  useEffect(() => {
+    if (!getFanToken()) return
+    let cancelled = false
+    void fanAuthApi
+      .me()
+      .then((me) => {
+        if (cancelled) return
+        if (me.name) setValue('name', me.name)
+        if (me.phone) {
+          setValue('mpesaMobile', me.phone)
+          setValue('contact', me.phone)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [setValue])
+
   const onSubmit = async (data: BookingForm) => {
     if (creatorScopeBlocked) {
       await Swal.fire({
         icon: 'error',
         title: 'Creator unavailable',
-        text: 'This creator booking page is unavailable right now. Please verify the link and try again.',
+        text: 'This booking page is unavailable right now. Please verify the link and try again.',
         confirmButtonColor: '#7c3aed',
       })
       return
@@ -213,20 +235,34 @@ export default function BookPage() {
       const mpesa = data.mpesaMobile!.replace(/\s/g, '')
       const acct = data.accountUsername!.trim()
       try {
-        const res = await coachingBookingApi.checkout({
-          service: data.service === 'both' ? 'both' : 'account_review',
-          name: data.name.trim(),
-          contact: data.contact.trim(),
-          mpesaMobile: mpesa,
-          accountUsername: acct,
-          ...(creatorSlug ? { creatorSlug } : {}),
-          ...(data.availability?.trim()
-            ? { availability: data.availability.trim() }
-            : {}),
-          ...(data.notes?.trim() ? { notes: data.notes.trim() } : {}),
-        })
+        const fanLoggedIn = Boolean(
+          getFanToken() && creatorSlug && data.service === 'account_review',
+        )
+        const res = fanLoggedIn
+          ? await fanPortalApi.checkoutCoaching({
+              creatorSlug,
+              accountUsername: acct,
+              mpesaMobile: mpesa,
+              name: data.name.trim(),
+              ...(data.notes?.trim() ? { notes: data.notes.trim() } : {}),
+            })
+          : await coachingBookingApi.checkout({
+              service: data.service === 'both' ? 'both' : 'account_review',
+              name: data.name.trim(),
+              contact: data.contact.trim(),
+              mpesaMobile: mpesa,
+              accountUsername: acct,
+              ...(creatorSlug ? { creatorSlug } : {}),
+              ...(data.availability?.trim()
+                ? { availability: data.availability.trim() }
+                : {}),
+              ...(data.notes?.trim() ? { notes: data.notes.trim() } : {}),
+            })
+        const paymentObj = (res as { payment?: { id?: string; amount?: number } }).payment
+        const paymentId = paymentObj?.id
+        if (!paymentId) throw new Error('No payment id returned')
         const stkKes =
-          res.payment?.amount != null ? Number(res.payment.amount) : accountReviewKes
+          paymentObj?.amount != null ? Number(paymentObj.amount) : accountReviewKes
         const kesLabel = Number.isFinite(stkKes) ? Math.round(stkKes) : accountReviewKes
         await Swal.fire({
           icon: 'info',
@@ -236,7 +272,7 @@ export default function BookPage() {
           timer: 6000,
           timerProgressBar: true,
         })
-        pollBookingPaymentStatus(res.payment.id, acct)
+        pollBookingPaymentStatus(paymentId, acct)
         reset({
           service: 'account_review',
           name: '',
@@ -316,12 +352,7 @@ export default function BookPage() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-[#0a0a0f] text-white">
-      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
-        <div className="absolute top-0 right-0 h-72 w-72 rounded-full bg-emerald-600/15 blur-[90px]" />
-        <div className="absolute bottom-1/4 -left-20 h-64 w-64 rounded-full bg-violet-600/20 blur-[80px]" />
-      </div>
-
+    <div className="relative min-h-screen text-white">
       <div className="relative z-10">
         <SiteNav />
 
@@ -334,10 +365,10 @@ export default function BookPage() {
               Book a session
             </p>
             <h1 className="text-3xl font-bold tracking-tight text-balance sm:text-4xl md:text-5xl">
-              Account review &amp; rank push
+              1:1 session with the creator
             </h1>
             <p className="mt-4 text-gray-400 text-pretty sm:text-lg">
-              Submit the form for account review or rank push. The creator you book with will follow up using the contact
+              Submit the form for a tactics review or a rank-push plan. The creator you book with will follow up using the contact
               details you provide.
             </p>
             {creatorSlug && (
@@ -555,11 +586,10 @@ export default function BookPage() {
             <p className="mt-6 text-xs text-gray-500">
               {needsPay ? (
                 <>
-                  After M-Pesa succeeds, your booking is saved and the creator is notified (
-                  <span className={SITE_NAME_CLASS}>{SITE_NAME}</span> + OBS alerts where configured).
+                  After M-Pesa succeeds, your booking is saved and the creator is notified.
                 </>
               ) : (
-                'Your request is saved securely. The creator will contact you using the contact information you enter above.'
+                'Your request is saved securely. The creator will contact you using the details you enter above.'
               )}
             </p>
 
@@ -581,6 +611,7 @@ export default function BookPage() {
             </button>
           </form>
         </main>
+        <SiteFooter />
       </div>
     </div>
   )

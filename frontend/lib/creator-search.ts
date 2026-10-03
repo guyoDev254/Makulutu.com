@@ -4,6 +4,12 @@ export type PublicCreator = {
   bio: string | null
   avatarUrl: string | null
   primaryCategory: string | null
+  nextLive?: {
+    title: string
+    startsAt: string
+    platformLabel: string
+    status: 'scheduled' | 'live'
+  } | null
 }
 
 export function effectiveCreatorSearchQuery(raw: string) {

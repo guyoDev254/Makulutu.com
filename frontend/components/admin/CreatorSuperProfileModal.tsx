@@ -3,8 +3,12 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { X, Loader2, ExternalLink, Copy, Check } from 'lucide-react'
-import { getStatusBadge } from '@/components/admin/format'
+import { getStatusBadge, payoutStatusBadgeClass, payoutStatusLabel } from '@/components/admin/format'
 import { PlatformFeeBreakdownTable } from '@/components/admin/PlatformFeeBreakdownTable'
+import { DashboardRangeControls, type DashboardRangePreset } from '@/components/admin/DashboardRangeControls'
+import { DashboardCharts } from '@/components/admin/DashboardCharts'
+import api from '@/lib/api'
+import type { DashboardStats } from '@/components/admin/types'
 
 type TabId =
   | 'overview'
@@ -48,13 +52,48 @@ export function CreatorSuperProfileModal(props: {
   const { open, onClose, loading, data, formatDate, formatAmount, shoutoutPlatformLabel } = props
   const [tab, setTab] = useState<TabId>('overview')
   const [copiedToken, setCopiedToken] = useState<string | null>(null)
+  const [dashPreset, setDashPreset] = useState<DashboardRangePreset>('thisWeek')
+  const [dashFrom, setDashFrom] = useState('')
+  const [dashTo, setDashTo] = useState('')
+  const [dash, setDash] = useState<DashboardStats | null>(null)
+  const [dashLoading, setDashLoading] = useState(false)
 
   useEffect(() => {
     if (open) {
       setTab('overview')
       setCopiedToken(null)
+      setDashPreset('thisWeek')
+      setDash(null)
     }
   }, [open])
+
+  const creatorId = data?.creator?.id as string | undefined
+
+  useEffect(() => {
+    if (!open || !creatorId) return
+    if (dashPreset === 'custom' && (!dashFrom || !dashTo)) return
+    let cancelled = false
+    setDashLoading(true)
+    const params = new URLSearchParams({ preset: dashPreset })
+    if (dashPreset === 'custom') {
+      params.set('from', dashFrom)
+      params.set('to', dashTo)
+    }
+    void api
+      .get<DashboardStats>(`/admin/creators/${creatorId}/dashboard?${params}`)
+      .then((res) => {
+        if (!cancelled) setDash(res.data)
+      })
+      .catch(() => {
+        if (!cancelled) setDash(null)
+      })
+      .finally(() => {
+        if (!cancelled) setDashLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, creatorId, dashPreset, dashFrom, dashTo])
 
   if (!open) return null
 
@@ -161,6 +200,71 @@ export function CreatorSuperProfileModal(props: {
             <p className="text-center text-slate-500 py-12">No data</p>
           ) : tab === 'overview' ? (
             <div className="space-y-6">
+              <DashboardRangeControls
+                preset={dashPreset}
+                from={dashFrom}
+                to={dashTo}
+                periodLabel={dash?.period?.label}
+                accent="cyan"
+                title="This streamer's day and week"
+                onPreset={(id) => setDashPreset(id)}
+                onCustomStart={(ymd) => {
+                  setDashFrom(ymd)
+                  setDashTo(ymd)
+                  setDashPreset('custom')
+                }}
+                onFromChange={setDashFrom}
+                onToChange={setDashTo}
+                onApplyCustom={() => {
+                  setDashFrom(dashFrom)
+                  setDashTo(dashTo)
+                  setDashPreset('custom')
+                }}
+              />
+              {dashLoading && !dash ? (
+                <p className="text-sm text-slate-500">Loading period totals…</p>
+              ) : dash?.period ? (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-amber-800/40 bg-amber-950/20 p-4">
+                    <p className="text-xs text-slate-500">Revenue in range</p>
+                    <p className="text-xl font-bold text-amber-200 tabular-nums">
+                      {formatAmount(dash.period.revenueKes)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-800/40 bg-emerald-950/20 p-4">
+                    <p className="text-xs text-slate-500">Completed payments</p>
+                    <p className="text-xl font-bold text-emerald-200 tabular-nums">
+                      {dash.period.completedPayments}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-sky-800/40 bg-sky-950/20 p-4">
+                    <p className="text-xs text-slate-500">New subscriptions</p>
+                    <p className="text-xl font-bold text-sky-200 tabular-nums">
+                      {dash.period.newSubscriptions}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+              {dash?.trends?.series?.length ? (
+                <DashboardCharts
+                  series={dash.trends.series}
+                  payments={dash.payments}
+                  formatKes={formatAmount}
+                  hideNumericAmounts={false}
+                  period={
+                    dash.period
+                      ? {
+                          label: dash.period.label,
+                          completedPayments: dash.period.completedPayments,
+                          newSubscriptions: dash.period.newSubscriptions,
+                          revenueKes: dash.period.revenueKes,
+                          previous: dash.period.previous,
+                        }
+                      : null
+                  }
+                />
+              ) : null}
+
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-xl border border-slate-700/80 bg-slate-900/50 p-4">
                   <p className="text-xs text-slate-500">Supporters</p>
@@ -602,7 +706,13 @@ export function CreatorSuperProfileModal(props: {
                         <td className="px-3 py-2 font-medium text-white">
                           {formatAmount(num(r.amountKes))}
                         </td>
-                        <td className="px-3 py-2">{r.status}</td>
+                        <td className="px-3 py-2">
+                          <span
+                            className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${payoutStatusBadgeClass(String(r.status))}`}
+                          >
+                            {payoutStatusLabel(String(r.status))}
+                          </span>
+                        </td>
                         <td className="px-3 py-2">{r.payoutChannel ?? '—'}</td>
                         <td className="px-3 py-2 max-w-[200px] truncate text-slate-500">
                           {r.notes ?? '—'}

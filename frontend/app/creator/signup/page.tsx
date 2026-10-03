@@ -3,10 +3,16 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { FormEvent, useState } from 'react'
-import { AlertCircle, Loader2, Lock, Mail, User } from 'lucide-react'
+import { AlertCircle, Loader2, Mail, User } from 'lucide-react'
 import { creatorAuthApi } from '@/lib/creator-auth'
 import {
+  isAdultDateOfBirth,
+  maxAdultDateOfBirth,
+  UNDERAGE_SIGNUP_MESSAGE,
+} from '@/lib/date-of-birth'
+import {
   AuthLoginShell,
+  AuthPasswordInput,
   authInputClass,
   authInputPlainClass,
   authLabelClass,
@@ -23,11 +29,17 @@ export default function CreatorSignupPage() {
     email: '',
     password: '',
     bio: '',
+    dateOfBirth: '',
     termsAccepted: false,
   })
+  const maxDob = maxAdultDateOfBirth()
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
+    if (!isAdultDateOfBirth(form.dateOfBirth)) {
+      setError(UNDERAGE_SIGNUP_MESSAGE)
+      return
+    }
     setLoading(true)
     setError(null)
     try {
@@ -37,9 +49,10 @@ export default function CreatorSignupPage() {
         email: form.email.trim().toLowerCase(),
         password: form.password,
         bio: form.bio.trim() || undefined,
+        dateOfBirth: form.dateOfBirth,
       })
       const email = encodeURIComponent(form.email.trim().toLowerCase())
-      router.push(`/creator/login?verifyEmail=1&email=${email}`)
+      router.push(`/creator/verify-email?email=${email}`)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not create account')
     } finally {
@@ -127,19 +140,31 @@ export default function CreatorSignupPage() {
           <label htmlFor="signup-password" className={authLabelClass}>
             Password
           </label>
-          <div className="relative">
-            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              id="signup-password"
-              required
-              type="password"
-              minLength={6}
-              placeholder="At least 6 characters"
-              value={form.password}
-              onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-              className={authInputClass}
-            />
-          </div>
+          <AuthPasswordInput
+            id="signup-password"
+            required
+            minLength={6}
+            placeholder="At least 6 characters"
+            value={form.password}
+            onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="signup-dob" className={authLabelClass}>
+            Date of birth
+          </label>
+          <input
+            id="signup-dob"
+            type="date"
+            required
+            max={maxDob}
+            min="1900-01-01"
+            value={form.dateOfBirth}
+            onChange={(e) => setForm((f) => ({ ...f, dateOfBirth: e.target.value }))}
+            className={authInputPlainClass}
+          />
+          <p className="mt-1.5 text-xs text-gray-500">You must be 18 or older.</p>
         </div>
 
         <div>

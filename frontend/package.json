@@ -17,6 +17,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.48.2",
+    "sharp": "^0.35.4",
     "sweetalert2": "^11.26.17",
     "zod": "^3.22.4"
   },

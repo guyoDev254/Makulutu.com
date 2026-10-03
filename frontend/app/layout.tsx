@@ -24,7 +24,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
-  themeColor: [{ media: '(prefers-color-scheme: dark)', color: '#111827' }],
+  themeColor: [{ media: '(prefers-color-scheme: dark)', color: '#07070c' }],
 }
 
 export default function RootLayout({
@@ -34,7 +34,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={bungee.variable}>
-      <body className={`${inter.className} min-h-dvh overflow-x-hidden antialiased`}>
+      <body className={`${inter.className} min-h-dvh overflow-x-hidden antialiased bg-canvas text-zinc-50`}>
         {children}
       </body>
     </html>

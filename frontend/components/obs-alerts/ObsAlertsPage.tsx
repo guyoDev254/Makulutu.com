@@ -30,6 +30,7 @@ import {
   getCreatorToken,
   getCreatorUser,
 } from '@/lib/creator-auth'
+import { toCompactTikTokClipRef } from '@/lib/tiktok-clip'
 
 export type ObsAlertsWorkspace = 'admin' | 'creator'
 
@@ -55,6 +56,7 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
   const [obsTestLoading, setObsTestLoading] = useState(false)
   const [obsLinkInfo, setObsLinkInfo] = useState<{
     enabled: boolean
+    streamVerified?: boolean
     playerUrl: string | null
     copyUrl: string | null
     message: string | null
@@ -91,6 +93,8 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
 
   const canManageUniqueObsLinks =
     workspace === 'creator' || isAdminOrSuper()
+  const creatorObsLocked =
+    workspace === 'creator' && obsLinkInfo?.streamVerified === false
 
   const uniqueObsLinks = useMemo(
     () => obsLinkInfo?.uniqueLinks ?? [],
@@ -300,6 +304,17 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
   }
 
   const handleTestObsAlert = async () => {
+    if (creatorObsLocked) {
+      Swal.fire({
+        icon: 'info',
+        title: 'Waiting for verification',
+        text:
+          obsLinkInfo?.message ||
+          'An admin must verify your TikTok or YouTube channel first. We email you when OBS is unlocked.',
+        confirmButtonColor: '#c026d3',
+      })
+      return
+    }
     const trimmed = obsTestUsername.trim().replace(/^@+/, '') || 'TestCreator'
     const trimmedMessage = obsTestMessage.trim()
     setObsTestLoading(true)
@@ -334,11 +349,10 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
           : {}),
         ...((obsTestKind === 'shoutout' || obsTestKind === 'creator_reward') &&
         obsTestVideoUrl.trim()
-          ? {
-              videoUrl: obsTestVideoUrl.trim().includes('://')
-                ? obsTestVideoUrl.trim()
-                : `https://${obsTestVideoUrl.trim()}`,
-            }
+          ? (() => {
+              const compact = toCompactTikTokClipRef(obsTestVideoUrl.trim())
+              return compact ? { videoUrl: compact } : { videoUrl: obsTestVideoUrl.trim() }
+            })()
           : {}),
       })
       const enabled = res.data?.obsEnabled !== false
@@ -409,6 +423,17 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
   }
 
   const handleCreateObsStreamLink = async () => {
+    if (creatorObsLocked) {
+      Swal.fire({
+        icon: 'info',
+        title: 'Waiting for verification',
+        text:
+          obsLinkInfo?.message ||
+          'An admin must verify your TikTok or YouTube channel first.',
+        confirmButtonColor: '#c026d3',
+      })
+      return
+    }
     setObsCreateLinkLoading(true)
     try {
       const label = obsNewLinkLabel.trim()
@@ -565,7 +590,7 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
 
   if (!hasMounted || !sessionOk()) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-canvas">
         <div className="text-center">
           <Loader2 className="w-12 h-12 text-purple-400 animate-spin mx-auto mb-4" />
           <p className="text-gray-400">
@@ -577,20 +602,8 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
   }
 
   return (
-    <div
-      className={
-        workspace === 'creator'
-          ? 'min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900'
-          : 'min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-zinc-950'
-      }
-    >
-      <header
-        className={
-          workspace === 'creator'
-            ? 'bg-gray-800/50 backdrop-blur-lg border-b border-gray-700/50 sticky top-0 z-50'
-            : 'bg-slate-900/60 backdrop-blur-lg border-b border-slate-700/50 sticky top-0 z-50'
-        }
-      >
+    <div className="min-h-screen bg-canvas">
+      <header className="sticky top-0 z-50 border-b border-white/5 bg-[#07070c]/80 backdrop-blur-xl">
         <div className="container mx-auto max-w-[1600px] px-3 sm:px-4 py-3 sm:py-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-3 min-w-0">
@@ -599,7 +612,7 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
                 className="inline-flex items-center gap-2 text-sm text-fuchsia-300 hover:text-fuchsia-200 transition shrink-0"
               >
                 <ChevronLeft className="w-4 h-4" />
-                {workspace === 'creator' ? 'Creator workspace' : 'Platform admin'}
+                {workspace === 'creator' ? 'Streamer workspace' : 'Platform admin'}
               </Link>
               <div className="min-w-0">
                 <h1 className="text-lg sm:text-xl font-bold text-white truncate">
@@ -648,6 +661,12 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
                   Add this URL as an OBS Browser Source, keep it open, then use Test below. Real
                   subscribers fire the same trigger automatically.
                 </p>
+                {creatorObsLocked ? (
+                  <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                    {obsLinkInfo?.message ||
+                      'Submit TikTok or YouTube on your profile. An admin emails you when OBS links are unlocked.'}
+                  </p>
+                ) : null}
               </div>
             </div>
             <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-end gap-3 lg:min-w-[280px]">
@@ -756,7 +775,7 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
               <button
                 type="button"
                 onClick={handleTestObsAlert}
-                disabled={obsTestLoading}
+                disabled={obsTestLoading || creatorObsLocked}
                 className="px-4 py-2 h-[38px] self-end bg-fuchsia-600 hover:bg-fuchsia-500 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50 flex items-center justify-center gap-2 shrink-0"
               >
                 {obsTestLoading ? (
@@ -934,7 +953,7 @@ export function ObsAlertsPage({ workspace }: { workspace: ObsAlertsWorkspace }) 
                   <button
                     type="button"
                     onClick={handleCreateObsStreamLink}
-                    disabled={obsCreateLinkLoading}
+                    disabled={obsCreateLinkLoading || creatorObsLocked}
                     className="px-4 py-2 bg-fuchsia-700 hover:bg-fuchsia-600 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
                   >
                     {obsCreateLinkLoading ? (

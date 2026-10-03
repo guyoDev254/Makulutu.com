@@ -2,11 +2,12 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Lock, User, Loader2, AlertCircle } from 'lucide-react'
+import { User, Loader2, AlertCircle } from 'lucide-react'
 import Swal from 'sweetalert2'
 import api from '@/lib/api'
 import {
   AuthLoginShell,
+  AuthPasswordInput,
   authInputClass,
   authLabelClass,
   authSubmitClass,
@@ -93,18 +94,13 @@ export default function LoginPage() {
           <label htmlFor="password" className={authLabelClass}>
             Password
           </label>
-          <div className="relative">
-            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <input
-              id="password"
-              type="password"
-              value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              required
-              className={authInputClass}
-              placeholder="Enter your password"
-            />
-          </div>
+          <AuthPasswordInput
+            id="password"
+            value={formData.password}
+            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+            required
+            placeholder="Enter your password"
+          />
         </div>
 
         <button type="submit" disabled={loading} className={authSubmitClass}>

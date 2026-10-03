@@ -3,31 +3,57 @@
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 214, 219, 220;
-  --background-end-rgb: 255, 255, 255;
+  --canvas: #07070c;
+  --canvas-elevated: #12121a;
+  --ink: #f4f4f8;
+  --muted: #9ca3af;
+  --line: rgba(255, 255, 255, 0.1);
+  --accent: #8b5cf6;
+  --accent-2: #d946ef;
+  --foreground-rgb: 244, 244, 248;
+  --background-start-rgb: 7, 7, 12;
+  --background-end-rgb: 7, 7, 12;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0;
-  }
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+  color: var(--ink);
+  background-color: var(--canvas);
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Prevent flex/grid children from forcing horizontal scroll on narrow screens */
+body::before {
+  content: '';
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(124, 58, 237, 0.22), transparent 50%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(217, 70, 239, 0.14), transparent 46%),
+    radial-gradient(ellipse 50% 30% at 50% 100%, rgba(6, 182, 212, 0.08), transparent 50%);
+}
+
+#__next,
+body > * {
+  position: relative;
+  z-index: 1;
+}
+
+::selection {
+  background: rgba(139, 92, 246, 0.45);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(167, 139, 250, 0.9);
+  outline-offset: 2px;
+}
+
 img,
 video {
   max-width: 100%;
@@ -38,4 +64,84 @@ video {
   .text-balance {
     text-wrap: balance;
   }
+
+  .bg-canvas {
+    background-color: var(--canvas);
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-950/40 transition hover:from-violet-500 hover:to-fuchsia-500 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/[0.06] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10;
+  }
+
+  .surface-card {
+    @apply rounded-2xl border border-white/10 bg-white/[0.035] shadow-[0_0_0_1px_rgba(255,255,255,0.03)_inset];
+  }
+}
+
+/* Flag marquee on home */
+.flag-marquee-track {
+  animation: marqueeFlags 28s linear infinite;
+}
+
+@keyframes marqueeFlags {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flag-marquee-track {
+    animation: none;
+  }
+}
+
+/* Thin dark scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+
+/* SweetAlert on dark UI */
+.swal2-popup {
+  background: #16161f !important;
+  color: #f4f4f5 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 1rem !important;
+}
+
+.swal2-title,
+.swal2-html-container {
+  color: #e4e4e7 !important;
+}
+
+.swal2-input,
+.swal2-textarea,
+.swal2-select {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #fff !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.swal2-select option {
+  background: #16161f;
+  color: #f4f4f5;
 }

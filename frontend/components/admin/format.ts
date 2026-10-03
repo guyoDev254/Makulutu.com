@@ -31,6 +31,27 @@ export function shoutoutPlatformLabel(code: string | null | undefined): string {
   return labels[k] || (code ? String(code) : '—')
 }
 
+export function payoutStatusLabel(status: string): string {
+  const s = String(status || '').toUpperCase()
+  if (s === 'PENDING') return 'Sending'
+  if (s === 'APPROVED') return 'Queued with Paystack'
+  if (s === 'PAID') return 'Paid to M-Pesa'
+  if (s === 'REJECTED') return 'Returned'
+  if (s === 'FAILED') return 'Failed'
+  if (s === 'CANCELLED') return 'Cancelled'
+  return s || '—'
+}
+
+export function payoutStatusBadgeClass(status: string): string {
+  const s = String(status || '').toUpperCase()
+  if (s === 'PAID') return 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/30'
+  if (s === 'APPROVED') return 'bg-cyan-500/15 text-cyan-200 ring-cyan-500/30'
+  if (s === 'REJECTED' || s === 'FAILED' || s === 'CANCELLED') {
+    return 'bg-rose-500/15 text-rose-300 ring-rose-500/30'
+  }
+  return 'bg-amber-500/15 text-amber-200 ring-amber-500/30'
+}
+
 export function getStatusBadge(status: string): string {
   const statusLower = status.toLowerCase()
   const styles = {
